@@ -64,6 +64,7 @@ internal static class FakeAdb
             if (args[2] == "shell")
             {
                 string command = args.Last();
+                if (command.StartsWith("# toolbox-directory-v1\np=")) return ListDirectory(command);
                 if (command == "fixture-hang")
                 {
                     File.WriteAllText(Path.Combine(root, "pid.txt"), System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
@@ -99,5 +100,31 @@ internal static class FakeAdb
             Console.Error.WriteLine("unknown fixture command"); return 2;
         }
         catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 1; }
+    }
+
+    static int ListDirectory(string command)
+    {
+        string literal = command.Split('\n')[1].Substring(2);
+        string path = literal.Substring(1, literal.Length - 2).Replace("'\"'\"'", "'").TrimEnd('/');
+        if (path.Length == 0) path = "/";
+        if (path == "/denied") { Console.Error.WriteLine("Permission denied (simulated directory)"); return 1; }
+        if (path == "/slow-browser")
+        {
+            File.WriteAllText(Path.Combine(root, "browser-pid.txt"), System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
+            Console.Write("READING"); Console.Out.Flush(); Thread.Sleep(60000); return 0;
+        }
+        if (path == "/sdcard/Download/a & 中文.bin" || path == "/sdcard/Download/quote' $name.txt") path = "/sdcard/Download";
+        string[] fields;
+        switch (path)
+        {
+            case "/": fields = new[] { "D", "data", "D", "sdcard", "D", "userdata", "D", "tmp", "F", "init.rc" }; break;
+            case "/sdcard": fields = new[] { "D", "Download", "D", "Pictures" }; break;
+            case "/sdcard/Download": fields = new[] { "D", "子目录", "F", "a & 中文.bin", "F", "quote' $name.txt", "F", ".hidden.txt", "D", ".settings", "L", "broken-link", "O", "socket" }; break;
+            case "/sdcard/Download/子目录": fields = new[] { "F", "nested.txt" }; break;
+            case "/empty": fields = new string[0]; break;
+            default: Console.Error.WriteLine("No such directory (simulated)"); return 1;
+        }
+        Console.Write("TB_ADB_DIR_V1\0" + path + "\0" + (fields.Length == 0 ? "" : String.Join("\0", fields) + "\0") + "E\x0000" + "0\x0000");
+        return 0;
     }
 }

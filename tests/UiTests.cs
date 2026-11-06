@@ -316,12 +316,123 @@ internal static class ToolboxUiTests
         Assert(header.Devices.Items.Count == 0 && !Field<Button>(adb, "execute").Enabled, "failed refresh clears stale device selection");
         File.Delete(Path.Combine(root, "mode.txt")); await adb.RefreshDevices();
         report.AppendLine("PASS ADB network connect/disconnect, stale-selection rejection and failed-refresh cleanup (simulated devices)");
+        await ExerciseAdbBrowser(form, adb, root);
 
         // Leave a client running on the hidden page to exercise the main form's asynchronous shutdown.
         shell.ShowView("adb-shell"); Field<Button>(adb, "clearShell").PerformClick();
         Assert(outputBox.TextLength == 0, "clear output leaves device selected");
         input.Text = "fixture-hang"; Field<Button>(adb, "execute").PerformClick();
         await Until(() => outputBox.Text.Contains("READY"), "ADB command before form shutdown");
+    }
+
+    static void SelectEntry(AdbBrowser dialog, string name)
+    {
+        var list = Field<ListView>(dialog, "entries");
+        foreach (ListViewItem row in list.Items) row.Selected = false;
+        var item = list.Items.Cast<ListViewItem>().Single(row => ((AdbEntry)row.Tag).Name == name);
+        item.Selected = true; item.Focused = true; list.Select();
+    }
+
+    static async Task UseBrowser(AdbWorkspace adb, Button open, Func<AdbBrowser, Task> action)
+    {
+        Exception failure = null;
+        var finished = new TaskCompletionSource<bool>();
+        using (var timer = new Timer { Interval = 50 })
+        {
+            timer.Tick += async delegate {
+                timer.Stop(); AdbBrowser dialog = null;
+                try
+                {
+                    dialog = Field<AdbBrowser>(adb, "browser");
+                    Assert(dialog != null, "browser opened from file-transfer page");
+                    await Until(() => !dialog.Busy, "initial device directory load");
+                    await action(dialog);
+                }
+                catch (Exception ex) { failure = ex; }
+                finally { if (dialog != null && !dialog.IsDisposed) dialog.Close(); finished.TrySetResult(true); }
+            };
+            timer.Start(); open.PerformClick();
+            await finished.Task;
+            if (failure != null) throw failure;
+            Assert(!adb.Busy, "modal browser releases shared ADB task state");
+        }
+    }
+
+    static async Task ExerciseAdbBrowser(SpeedForm form, AdbWorkspace adb, string root)
+    {
+        var pushRemote = Field<TextBox>(adb, "pushRemote");
+        var pullRemote = Field<TextBox>(adb, "pullRemote");
+        var filesHeader = Field<AdbHeader>(adb, "filesHeader");
+        filesHeader.Address.Text = "";
+        Field<Button>(adb, "clearFiles").PerformClick();
+        string transferLog = Field<TextBox>(adb, "fileOutput").Text;
+        pushRemote.Text = "/";
+        await UseBrowser(adb, Field<Button>(adb, "browsePush"), async dialog => {
+            var list = Field<ListView>(dialog, "entries");
+            Assert(!filesHeader.Devices.Enabled && !Field<Button>(adb, "pull").Enabled, "browser locks device and transfer actions");
+            Assert(!Field<Button>(dialog, "up").Enabled, "root has no parent navigation");
+            SelectEntry(dialog, "init.rc"); Assert(!Field<Button>(dialog, "choose").Enabled, "push browser cannot choose a file as destination directory");
+            SelectEntry(dialog, "sdcard");
+            typeof(ListView).GetMethod("OnItemActivate", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(list, new object[] { EventArgs.Empty });
+            await Until(() => !dialog.Busy && Field<TextBox>(dialog, "address").Text == "/sdcard", "double-click enters directory");
+            await dialog.Navigate("/sdcard/Download");
+            Assert(Field<TextBox>(dialog, "address").AutoCompleteCustomSource.Contains("/sdcard/Download/子目录/"), "directory names available for path completion");
+            Field<CheckBox>(dialog, "hidden").Checked = true;
+            Assert(list.Items.Cast<ListViewItem>().Any(row => row.Text == ".hidden.txt"), "hidden files visible on demand");
+            Field<TextBox>(dialog, "filter").Text = "中文";
+            Assert(list.Items.Count == 1 && list.Items[0].Text == "a & 中文.bin", "filter current directory by name");
+            Field<TextBox>(dialog, "filter").Clear();
+            SelectEntry(dialog, "broken-link"); Assert(!Field<Button>(dialog, "choose").Enabled, "broken links cannot be chosen");
+            Field<Button>(dialog, "current").PerformClick();
+        });
+        Assert(pushRemote.Text == "/sdcard/Download/" && Field<TextBox>(adb, "fileOutput").Text == transferLog, "directory selection fills destination without transferring");
+
+        pullRemote.Text = "/sdcard/Download/quote' $name.txt";
+        await UseBrowser(adb, Field<Button>(adb, "browsePull"), dialog => {
+            Assert(Field<TextBox>(dialog, "address").Text == "/sdcard/Download", "existing file starts browsing in its parent directory");
+            Field<CheckBox>(dialog, "hidden").Checked = true;
+            SelectEntry(dialog, "a & 中文.bin");
+            Assert(Field<Button>(dialog, "choose").Enabled, "pull browser accepts regular files");
+            Capture(dialog, "preview-adb-browser-demo.png");
+            Field<Button>(dialog, "choose").PerformClick();
+            return Task.FromResult(true);
+        });
+        Assert(pullRemote.Text == "/sdcard/Download/a & 中文.bin", "file selection fills the exact Unicode remote source");
+        Capture(form, "preview-adb-files-browse.png");
+
+        await UseBrowser(adb, Field<Button>(adb, "browsePull"), dialog => {
+            SelectEntry(dialog, "子目录"); Field<Button>(dialog, "choose").PerformClick(); return Task.FromResult(true);
+        });
+        Assert(pullRemote.Text == "/sdcard/Download/子目录", "pull browser also accepts a whole folder");
+        report.AppendLine("PASS ADB board browser navigation, file/folder distinction, hidden/filter/completion and path-only selection");
+
+        // Verify that the chosen directory can actually be pulled recursively by the transfer action.
+        string deviceFolder = Path.Combine(root, "device", "sdcard", "Download", "子目录");
+        Directory.CreateDirectory(Path.Combine(deviceFolder, "nested")); File.WriteAllText(Path.Combine(deviceFolder, "nested", "inside.txt"), "folder payload");
+        await adb.Transfer(false);
+        Assert(File.ReadAllText(Path.Combine(Field<TextBox>(adb, "pullLocal").Text, "子目录", "nested", "inside.txt")) == "folder payload", "browser-selected folder pulls recursively");
+        string localFolder = Path.Combine(root, "UI folder upload");
+        Directory.CreateDirectory(Path.Combine(localFolder, "nested")); File.WriteAllText(Path.Combine(localFolder, "nested", "inside.txt"), "pushed folder payload");
+        Field<TextBox>(adb, "pushLocal").Text = localFolder;
+        await adb.Transfer(true);
+        Assert(File.ReadAllText(Path.Combine(root, "device", "sdcard", "Download", "UI folder upload", "nested", "inside.txt")) == "pushed folder payload", "local folder pushes recursively into browser-selected destination");
+
+        string unchanged = pullRemote.Text;
+        await UseBrowser(adb, Field<Button>(adb, "browsePull"), async dialog => {
+            await dialog.Navigate("/denied");
+            Assert(Field<ListView>(dialog, "entries").Items.Count == 0 && !Field<Button>(dialog, "current").Enabled && Field<Label>(dialog, "status").Text.Contains("Permission denied"), "permission error clears stale choices and is not an empty folder");
+            await dialog.Navigate("/empty");
+            Assert(Field<ListView>(dialog, "entries").Items.Count == 0 && Field<Button>(dialog, "current").Enabled, "real empty directory can be selected");
+            Field<TextBox>(dialog, "address").Text = "/not-loaded";
+            Assert(!Field<Button>(dialog, "current").Enabled, "typing a new address invalidates old directory selection");
+            var read = dialog.Navigate("/slow-browser");
+            await Until(() => File.Exists(Path.Combine(root, "browser-pid.txt")), "slow directory client started");
+            int pid = Int32.Parse(File.ReadAllText(Path.Combine(root, "browser-pid.txt")));
+            dialog.Close(); await read;
+            Assert(ProcessExited(pid), "closing browser cancels and releases its directory client");
+        });
+        Assert(pullRemote.Text == unchanged, "closing browser without choosing preserves the input path");
+        report.AppendLine("PASS ADB browser-selected recursive folder push/pull, permission failure, empty folder, stale-path rejection and cancel cleanup");
     }
 
     static async Task ExerciseSockets(SpeedForm form, ToolShell shell)

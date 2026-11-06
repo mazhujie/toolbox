@@ -42,6 +42,7 @@ internal sealed class AdbWorkspace : IDisposable
     readonly Button execute = new Button(), stop = new Button(), terminal = new Button(), refresh = new Button(), clearShell = new Button(), saveShell = new Button();
     readonly Button push = new Button(), pull = new Button(), clearFiles = new Button(), openFolder = new Button();
     readonly Button pickFile = new Button(), pickDirectory = new Button(), pickDestination = new Button();
+    readonly Button browsePush = new Button(), browsePull = new Button();
     readonly Label shellNotice = new Label(), fileNotice = new Label();
     readonly ProgressBar shellProgress = new ProgressBar(), fileProgress = new ProgressBar();
     readonly AdbText shellLog = new AdbText(), fileLog = new AdbText();
@@ -51,9 +52,10 @@ internal sealed class AdbWorkspace : IDisposable
     AdbDevice selected;
     CancellationTokenSource running;
     TaskCompletionSource<bool> completion;
+    AdbBrowser browser;
     bool changing, shuttingDown, disposed, stopped;
     string executable, networkAddress = "";
-    internal bool Busy { get { return running != null; } }
+    internal bool Busy { get { return running != null || browser != null; } }
     internal Button[] ShellActions { get { return new[] { execute, stop, terminal, refresh, clearShell, saveShell }; } }
     internal Button[] FileActions { get { return new[] { push, pull, stop, refresh, openFolder, clearFiles }; } }
     IEnumerable<AdbHeader> Headers { get { return new[] { shellHeader, filesHeader }; } }
@@ -78,16 +80,18 @@ internal sealed class AdbWorkspace : IDisposable
         Label(FilesPage, "推送到设备  ·  push", 24, 248);
         Label(FilesPage, "本地来源", 24, 288); Text(FilesPage, pushLocal, 120, 282, 444, 28, false);
         Button(FilesPage, pickFile, "选文件", 576, 282, 90); Button(FilesPage, pickDirectory, "选目录", 678, 282, 90);
-        Label(FilesPage, "设备目标", 24, 330); Text(FilesPage, pushRemote, 120, 324, 648, 28, false); pushRemote.Text = "/sdcard/Download/";
+        Label(FilesPage, "设备目标", 24, 330); Text(FilesPage, pushRemote, 120, 324, 546, 28, false); pushRemote.Text = "/sdcard/Download/";
+        Button(FilesPage, browsePush, "浏览…", 678, 324, 90);
         Label(FilesPage, "拉取到电脑  ·  pull", 24, 376);
-        Label(FilesPage, "设备来源", 24, 416); Text(FilesPage, pullRemote, 120, 410, 648, 28, false);
+        Label(FilesPage, "设备来源", 24, 416); Text(FilesPage, pullRemote, 120, 410, 546, 28, false);
+        Button(FilesPage, browsePull, "浏览…", 678, 410, 90);
         Label(FilesPage, "保存目录", 24, 458); Text(FilesPage, pullLocal, 120, 452, 546, 28, false);
         Button(FilesPage, pickDestination, "选目录", 678, 452, 90);
         string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
         pullLocal.Text = Directory.Exists(downloads) ? downloads : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         Label(FilesPage, "支持文件和目录；同名目标按 ADB 规则覆盖。取消传输可能留下部分文件。", 24, 494);
         Text(FilesPage, fileOutput, 24, 528, 744, 136, true); fileOutput.ReadOnly = true; fileOutput.BackColor = Color.White;
-        fileNotice.Text = "输入完整设备路径；本地来源也可拖入文件或目录。";
+        fileNotice.Text = "点击“浏览…”选择板端文件或目录；本地来源也可拖入文件或目录。";
         execute.Text = "执行命令"; stop.Text = "停止当前任务"; terminal.Text = "打开交互终端";
         refresh.Text = "刷新设备"; clearShell.Text = "清空 Shell 输出"; saveShell.Text = "保存 Shell 输出";
         push.Text = "推送到设备"; pull.Text = "拉取到电脑"; clearFiles.Text = "清空传输日志"; openFolder.Text = "打开保存目录";
@@ -143,6 +147,7 @@ internal sealed class AdbWorkspace : IDisposable
             using (var dialog = new OpenFileDialog { Filter = "所有文件|*.*" }) if (dialog.ShowDialog() == DialogResult.OK) pushLocal.Text = dialog.FileName;
         };
         pickDirectory.Click += delegate { PickFolder(pushLocal); }; pickDestination.Click += delegate { PickFolder(pullLocal); };
+        browsePush.Click += delegate { BrowseRemote(true); }; browsePull.Click += delegate { BrowseRemote(false); };
         pushLocal.AllowDrop = true;
         pushLocal.DragEnter += delegate(object sender, DragEventArgs e) { e.Effect = !Busy && e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None; };
         pushLocal.DragDrop += delegate(object sender, DragEventArgs e) {
@@ -177,7 +182,7 @@ internal sealed class AdbWorkspace : IDisposable
             header.State.Text = String.IsNullOrWhiteSpace(executable) ? "未找到 ADB：下载并解压 Platform Tools，再选择 adb.exe。"
                 : selected != null ? selected.ToString() : devices.Length == 0 ? "点击左侧“刷新设备”；新电脑可将 platform-tools 放在 EXE 旁。" : "请选择设备；未授权时需在设备上确认 USB 调试。";
         }
-        execute.Enabled = terminal.Enabled = push.Enabled = pull.Enabled = ready;
+        execute.Enabled = terminal.Enabled = push.Enabled = pull.Enabled = browsePush.Enabled = browsePull.Enabled = ready;
         stop.Enabled = Busy && !shuttingDown; refresh.Enabled = idle;
         foreach (Control control in new Control[] { command, history, pushLocal, pushRemote, pullLocal, pullRemote, pickFile, pickDirectory, pickDestination }) control.Enabled = idle;
         shellProgress.Visible = fileProgress.Visible = Busy;
@@ -328,6 +333,27 @@ internal sealed class AdbWorkspace : IDisposable
         using (var dialog = new OpenFileDialog { Filter = "Android Debug Bridge|adb.exe", Title = "选择完整 Platform Tools 文件夹内的 adb.exe" })
         if (dialog.ShowDialog() == DialogResult.OK) shellHeader.Executable.Text = dialog.FileName;
     }
+    void BrowseRemote(bool pushing)
+    {
+        if (Busy || shuttingDown) return;
+        try
+        {
+            var device = RequireDevice();
+            string path = AdbLocator.Validate(executable);
+            TextBox target = pushing ? pushRemote : pullRemote;
+            using (var dialog = new AdbBrowser(device.ToString(), target.Text, pushing, (directory, token) => AdbFiles.Read(path, device, directory, token)))
+            {
+                browser = dialog; UpdateControls();
+                if (dialog.ShowDialog(FilesPage.FindForm()) == DialogResult.OK && !shuttingDown)
+                {
+                    target.Text = dialog.SelectedPath;
+                    Notice("已选择" + (pushing ? "推送目录：" : "拉取来源：") + dialog.SelectedPath + "；点击“" + (pushing ? "推送到设备" : "拉取到电脑") + "”后开始传输。");
+                }
+            }
+        }
+        catch (Exception ex) { Notice(ex.Message); }
+        finally { browser = null; if (!shuttingDown) UpdateControls(); }
+    }
     static void PickFolder(TextBox box)
     {
         using (var dialog = new FolderBrowserDialog { SelectedPath = Directory.Exists(box.Text) ? box.Text : "" })
@@ -358,8 +384,9 @@ internal sealed class AdbWorkspace : IDisposable
     }
     internal Task Shutdown()
     {
-        if (!shuttingDown) { shuttingDown = true; display.Stop(); if (running != null) running.Cancel(); }
-        return completion == null ? Task.FromResult(true) : completion.Task;
+        var dialog = browser;
+        if (!shuttingDown) { shuttingDown = true; display.Stop(); if (running != null) running.Cancel(); if (dialog != null) dialog.Close(); }
+        return Task.WhenAll(completion == null ? Task.FromResult(true) : completion.Task, dialog == null ? Task.FromResult(true) : dialog.Completion);
     }
     public void Dispose()
     {

@@ -63,6 +63,21 @@ internal static class AdbTests
             Assert(cancelled && exited, "cancel kills only the started client process");
         }
         report.AppendLine("PASS ADB live output, cancellation and client-process cleanup (fixture executable)");
+        var listing = await AdbFiles.Read(executable, device, "/sdcard/Download/quote' $name.txt", CancellationToken.None);
+        Assert(listing.Path == "/sdcard/Download" && listing.Entries.First().Directory && listing.Entries.Any(e => e.Path == "/sdcard/Download/quote' $name.txt" && !e.Directory), "directory and file types, UTF-8 and quoted paths");
+        Assert(listing.Entries.Single(e => e.Name == "broken-link").Selectable == false && listing.Entries.Single(e => e.Name == "socket").Selectable == false, "invalid links and special files cannot be selected");
+        Assert(AdbFiles.Parent("/") == "/" && AdbFiles.Parent("/sdcard/Download/") == "/sdcard", "root and parent path handling");
+        Assert((await AdbFiles.Read(executable, device, "/empty", CancellationToken.None)).Entries.Length == 0, "empty directory remains selectable");
+        bool denied = false; try { await AdbFiles.Read(executable, device, "/denied", CancellationToken.None); } catch (IOException ex) { denied = ex.Message.Contains("Permission denied"); }
+        Assert(denied, "permission failure is not an empty listing");
+        foreach (string bad in new[] { "", "TB_ADB_DIR_V1\0/\0D\0x\0", "TB_ADB_DIR_V1\0/\0D\0../escape\0E\x0000" + "0\0", "TB_ADB_DIR_V1\0/\0D\0same\0F\0same\0E\x0000" + "0\0" })
+        { bool rejected = false; try { AdbFiles.Parse(bad); } catch (IOException) { rejected = true; } Assert(rejected, "reject malformed, incomplete or ambiguous directory listings"); }
+        var unusual = AdbFiles.Parse("TB_ADB_DIR_V1\0/\0f\0link.txt\0d\0linked-directory\0F\0line\nbreak\0E\x0000" + "1\0");
+        Assert(unusual.Limited && unusual.Skipped == 1 && unusual.Entries.Length == 2 && unusual.Entries.All(e => e.Selectable), "limits, symlink types and unsupported names surfaced");
+        string unixRoot = "/tmp/toolbox-browser-" + Path.GetFileName(root);
+        File.WriteAllText(Path.Combine(root, "browser-script.sh"), AdbFiles.Command(unixRoot), new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(root, "browser-quoted.sh"), AdbFiles.Command(unixRoot + "/quo'te $value ; $(touch TOOLBOX_SENTINEL) [x]"), new UTF8Encoding(false));
+        report.AppendLine("PASS ADB directory protocol, file/folder/link distinction, Unicode paths, permissions and incomplete-output rejection");
         return report.ToString();
     }
 }
