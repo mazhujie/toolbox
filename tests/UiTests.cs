@@ -71,7 +71,7 @@ internal static class ToolboxUiTests
         var automatic = Field<Button>(workspace, "automatic");
         var timer = Field<Timer>(workspace, "sendTimer");
 
-        foreach (var id in new[] { "speed", "ip", "lan", "serial", "socket", "speed" })
+        foreach (var id in new[] { "speed", "ip", "lan", "serial", "socket", "adb-shell", "adb-files", "speed" })
         {
             shell.ShowView(id);
             await Task.Delay(30);
@@ -79,7 +79,7 @@ internal static class ToolboxUiTests
             Assert(actions.Controls.Cast<Control>().All(c => c.Parent == actions), "left action placement");
             Capture(form, "preview-" + id + ".png");
         }
-        report.AppendLine("PASS five pages, three independent categories and left action placement");
+        report.AppendLine("PASS seven pages, four independent categories and left action placement");
 
         var ip = Field<IpPage>(form, "ipPage");
         var routeButton = Field<Button>(ip, "settings");
@@ -122,6 +122,7 @@ internal static class ToolboxUiTests
         report.AppendLine("PASS network mutual exclusion survives navigation");
 
         await ExerciseSockets(form, shell);
+        await ExerciseAdb(form, shell);
 
         shell.ShowView("serial");
         Assert(Field<FlowLayoutPanel>(shell, "pages").Controls.Count == 1, "one serial page");
@@ -218,6 +219,109 @@ internal static class ToolboxUiTests
         automatic.PerformClick();
         await Until(() => current().Writes > 0, "final periodic send");
         // Main closes this actual form while periodic sending is active.
+    }
+
+    static bool ProcessExited(int pid)
+    {
+        try { using (var process = Process.GetProcessById(pid)) return process.HasExited; }
+        catch (ArgumentException) { return true; }
+    }
+
+    static async Task ExerciseAdb(SpeedForm form, ToolShell shell)
+    {
+        var adb = Field<AdbWorkspace>(form, "adbWorkspace");
+        var header = Field<AdbHeader>(adb, "shellHeader");
+        var filesHeader = Field<AdbHeader>(adb, "filesHeader");
+        var input = Field<TextBox>(adb, "command");
+        var outputBox = Field<TextBox>(adb, "shellOutput");
+        var notice = Field<Label>(adb, "shellNotice");
+        string executable = header.Executable.Text, root = Path.GetDirectoryName(executable);
+        report.Append(await AdbTests.Run(executable));
+        shell.ShowView("adb-shell");
+        header.Executable.Text = "";
+        Assert(filesHeader.Executable.Text == "" && !Field<Button>(adb, "execute").Enabled && header.State.Text.Contains("未找到"), "missing ADB setup state shared across pages");
+        Capture(form, "preview-adb-missing.png");
+        await adb.RefreshDevices();
+        Assert(!adb.Busy && !Field<Button>(adb, "execute").Enabled, "missing executable fails without running a command");
+        header.Executable.Text = executable;
+        await adb.RefreshDevices();
+        Assert(header.Devices.Items.Count == 3 && ((AdbDevice)header.Devices.SelectedItem).Serial == "DEMO-USB", "single ready device auto-selected");
+        Assert(ReferenceEquals(header.Devices.SelectedItem, filesHeader.Devices.SelectedItem), "Shell and transfer share selected device");
+        header.Devices.SelectedIndex = 1;
+        Assert(!Field<Button>(adb, "execute").Enabled && !Field<Button>(adb, "push").Enabled && header.State.Text.Contains("未授权"), "unauthorized device cannot execute or transfer");
+        header.Devices.SelectedIndex = 2;
+        Assert(!Field<Button>(adb, "execute").Enabled && header.State.Text.Contains("离线"), "offline device cannot execute");
+        header.Devices.SelectedIndex = 0;
+        report.AppendLine("PASS ADB missing-tool setup, shared configuration, explicit selection and unauthorized/offline gating");
+
+        Field<Button>(adb, "clearShell").PerformClick();
+        input.Text = "pwd\r\nls -la";
+        Field<Button>(adb, "execute").PerformClick();
+        Assert(adb.Busy && !filesHeader.Devices.Enabled && !header.Executable.Enabled && !Field<Button>(adb, "push").Enabled, "device and settings locked while task runs");
+        await Until(() => outputBox.Text.Contains("模拟设备输出"), "ADB live output");
+        shell.ShowView("adb-files");
+        await Until(() => !adb.Busy, "Shell completes while hidden");
+        shell.ShowView("adb-shell");
+        Assert(outputBox.Text.Contains("Download") && Field<ComboBox>(adb, "history").Items.Count == 1, "command output and session history");
+        string[] actualArgs = File.ReadAllLines(Path.Combine(root, "last-args.txt")).Select(value => Encoding.UTF8.GetString(Convert.FromBase64String(value))).ToArray();
+        Assert(actualArgs.Last() == "pwd\nls -la", "multiline commands use device LF endings");
+        Capture(form, "preview-adb-shell-demo.png");
+        input.Text = "fixture-error"; await adb.Execute();
+        Assert(notice.Text.Contains("退出码 7") && outputBox.Text.Contains("Permission denied"), "stderr and failed exit are not marked successful");
+        input.Text = "fixture-hang"; Field<Button>(adb, "execute").PerformClick();
+        await Until(() => outputBox.Text.Contains("READY"), "long running ADB command");
+        int pid = Int32.Parse(File.ReadAllText(Path.Combine(root, "pid.txt")));
+        shell.ShowView("adb-files");
+        Field<Button>(adb, "stop").PerformClick();
+        await Until(() => !adb.Busy, "stop hidden Shell from transfer page");
+        Assert(ProcessExited(pid) && header.Devices.Enabled, "cancel releases client and unlocks selection");
+        report.AppendLine("PASS ADB streaming Shell, command history, nonzero exit, navigation and cross-page cancellation");
+
+        string source = Path.Combine(root, "local & 中文", "a & 中文.bin");
+        string destination = Path.Combine(root, "UI pull result"); Directory.CreateDirectory(destination);
+        Field<TextBox>(adb, "pushLocal").Text = source;
+        Field<TextBox>(adb, "pushRemote").Text = "/sdcard/UI/";
+        await adb.Transfer(true);
+        Assert(Field<TextBox>(adb, "fileOutput").Text.Contains("pushed"), "UI push command");
+        Field<TextBox>(adb, "pullRemote").Text = "/sdcard/UI/" + Path.GetFileName(source);
+        Field<TextBox>(adb, "pullLocal").Text = destination;
+        await adb.Transfer(false);
+        Assert(File.ReadAllBytes(source).SequenceEqual(File.ReadAllBytes(Path.Combine(destination, Path.GetFileName(source)))), "UI push/pull byte identity");
+        Capture(form, "preview-adb-files-demo.png");
+        Field<TextBox>(adb, "pushRemote").Text = "/permission-denied";
+        await adb.Transfer(true);
+        Assert(Field<Label>(adb, "fileNotice").Text.Contains("Permission denied"), "transfer failure surfaced");
+        Field<TextBox>(adb, "pushRemote").Text = "/slow-transfer";
+        Field<Button>(adb, "push").PerformClick();
+        await Until(() => Field<TextBox>(adb, "fileOutput").Text.Contains("模拟传输等待"), "transfer live progress");
+        pid = Int32.Parse(File.ReadAllText(Path.Combine(root, "pid.txt")));
+        Field<Button>(adb, "stop").PerformClick(); await Until(() => !adb.Busy, "cancel transfer");
+        Assert(ProcessExited(pid) && Field<Button>(adb, "pull").Enabled, "transfer cancellation releases process and restores buttons");
+        report.AppendLine("PASS ADB UI file push/pull, exact binary contents, transfer errors and cancellation");
+
+        filesHeader.Address.Text = "127.0.0.1:5555";
+        filesHeader.Connect.PerformClick(); await Until(() => !adb.Busy, "simulated network ADB connect");
+        Assert(((AdbDevice)header.Devices.SelectedItem).Serial == "127.0.0.1:5555" && header.Disconnect.Enabled, "network connect selects requested device");
+        filesHeader.Disconnect.PerformClick(); await Until(() => !adb.Busy, "simulated network ADB disconnect");
+        Assert(header.Devices.SelectedItem == null && header.Devices.Items.Count == 3, "disconnect only targets the selected network device");
+        filesHeader.Address.Text = "fail.invalid:5555";
+        filesHeader.Connect.PerformClick(); await Until(() => !adb.Busy, "network connect reports failure despite zero ADB exit");
+        Assert(Field<Label>(adb, "fileNotice").Text.Contains("未发现"), "failed connect output is not reported as a successful connection");
+        await adb.RefreshDevices();
+        File.WriteAllText(Path.Combine(root, "mode.txt"), "removed");
+        await adb.RefreshDevices();
+        Assert(header.Devices.SelectedItem == null && !Field<Button>(adb, "execute").Enabled, "disappeared device never silently switches to another ready device");
+        File.WriteAllText(Path.Combine(root, "mode.txt"), "invalid");
+        await adb.RefreshDevices();
+        Assert(header.Devices.Items.Count == 0 && !Field<Button>(adb, "execute").Enabled, "failed refresh clears stale device selection");
+        File.Delete(Path.Combine(root, "mode.txt")); await adb.RefreshDevices();
+        report.AppendLine("PASS ADB network connect/disconnect, stale-selection rejection and failed-refresh cleanup (simulated devices)");
+
+        // Leave a client running on the hidden page to exercise the main form's asynchronous shutdown.
+        shell.ShowView("adb-shell"); Field<Button>(adb, "clearShell").PerformClick();
+        Assert(outputBox.TextLength == 0, "clear output leaves device selected");
+        input.Text = "fixture-hang"; Field<Button>(adb, "execute").PerformClick();
+        await Until(() => outputBox.Text.Contains("READY"), "ADB command before form shutdown");
     }
 
     static async Task ExerciseSockets(SpeedForm form, ToolShell shell)
@@ -490,8 +594,13 @@ internal static class ToolboxUiTests
         FakeSerialTransport fake = null;
         SerialSettings parameters = null;
         var session = new SerialSession(settings => { parameters = settings; return fake = new FakeSerialTransport(); });
+        string fixtureRoot = Path.Combine(output, "adb-session-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(fixtureRoot);
+        string fixture = Path.Combine(fixtureRoot, "adb.exe");
+        File.Copy(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "adb-fixture", "adb.exe"), fixture);
+        var adb = new AdbWorkspace(fixture, false);
         bool passed = false;
-        using (var form = new SpeedForm(session))
+        using (var form = new SpeedForm(session, adb))
         {
             var sockets = Field<SocketSession>(Field<SocketPage>(form, "socketPage"), "session");
             form.Shown += async delegate
@@ -501,11 +610,16 @@ internal static class ToolboxUiTests
                 form.Close();
             };
             Application.Run(form);
-            passed = passed && !sockets.IsOpen;
+            passed = passed && !sockets.IsOpen && !adb.Busy;
         }
         passed = passed && !session.IsOpen && fake != null && fake.Disposed;
         report.AppendLine(passed ? "PASS form close stops sending and releases serial transport" : "FAIL UI test or shutdown");
+        string pidFile = Path.Combine(fixtureRoot, "pid.txt");
+        bool adbClosed = File.Exists(pidFile) && ProcessExited(Int32.Parse(File.ReadAllText(pidFile)));
+        passed = passed && adbClosed;
+        report.AppendLine(adbClosed ? "PASS form close cancels and awaits the active ADB client" : "FAIL ADB process shutdown");
         report.AppendLine("NOTE all serial I/O used a simulated transport; no real COM port was opened.");
+        report.AppendLine("NOTE ADB used an isolated fixture executable and simulated device files; no real device was accessed.");
         File.WriteAllText(Path.Combine(output, "ui-test.txt"), report.ToString(), Encoding.UTF8);
         return passed ? 0 : 1;
     }

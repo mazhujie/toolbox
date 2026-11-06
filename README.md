@@ -1,7 +1,7 @@
 # Toolbox
 
-Windows 网络工具箱、串口助手与 TCP/UDP 调试助手，使用 C# / WinForms 和 .NET Framework 4.8。
-当前版本：3.0。无第三方运行库，构建后可单独运行 `Toolbox.exe`。
+Windows 网络工具箱、串口助手、TCP/UDP 调试助手与 ADB 工具，使用 C# / WinForms 和 .NET Framework 4.8。
+当前版本：3.1。构建后可单独运行 `Toolbox.exe`；ADB 功能另调用官方 Android Platform Tools。
 
 ## 功能
 
@@ -10,10 +10,50 @@ Windows 网络工具箱、串口助手与 TCP/UDP 调试助手，使用 C# / Win
 - 局域网扫描：IPv4 网段 Ping，以绿、黄、红、灰点显示延迟及未响应状态。
 - 串口助手：参数设置、文本/HEX 收发、定时发送、接收日志及多条勾选发送。
 - 网络调试：独立大类，提供 UDP、TCP 客户端、TCP 服务端和多客户端连接管理。
+- ADB 工具：独立大类，包含 Shell 命令和文件传输两页，共用设备选择与 ADB 路径。
 
 串口连接设置与收发位于同一页，高级参数可折叠。切换到网络页不会断开串口。
 “清空记录”同时重置日志、待显示的接收数据和 RX/TX 累计字节数；后续收发从零计数，连接与发送任务继续运行。
 网络操作按钮位于左侧，IP 查询的连接方式与下载测速独立。
+
+## ADB 工具
+
+首次点击“刷新设备”，选择在线且已授权的设备。支持 USB 设备和已开启网络调试的设备；
+网络连接填写 `IP:端口`，需要无线配对的设备应先按 Android 官方流程完成配对。
+多设备使用明确的 transport ID（不可用时使用序列号）定位，任务运行时锁定设备选择。
+所选设备消失后不会自动切到另一台；未授权和离线设备不能执行命令或传输。
+
+- **Shell 命令**：支持多行命令、Ctrl+Enter 执行、实时输出、错误及退出码、停止、输出保存和最近 30 条命令历史。
+  每次执行创建独立 shell，`cd` 等状态不跨次保留。需要 `top` / `vi` 或持续会话时，点击“打开交互终端”。
+- **文件传输**：本地文件/目录推送到设备，设备文件/目录拉取到指定本地目录；支持浏览和拖入本地来源。
+  设备路径需以 `/` 开头，传输日志显示 ADB 原始进度与结果。同名目标遵循 ADB 的覆盖规则，取消可能留下部分文件。
+- 两页共用一个内置任务，切页继续运行，退出时停止并等待本工具启动的 ADB 客户端结束。
+  不执行 `kill-server`；停止客户端不保证设备端进程结束，独立交互终端需自行退出。
+- 输出仅保留最近约 256K 字符，命令历史与设备列表仅存在当前窗口内，不自动写盘。
+  ADB 路径在成功刷新后保存到 `%LOCALAPPDATA%\Toolbox\adb-path.txt`。
+
+### 新电脑没有 ADB
+
+从 [Android 官方下载 Platform Tools](https://developer.android.com/tools/releases/platform-tools)，
+完整解压并保留同目录 DLL。可以在界面选择 `adb.exe`，或与程序一起放置：
+
+```text
+Toolbox.exe
+platform-tools/
+  adb.exe
+  AdbWinApi.dll
+  AdbWinUsbApi.dll
+  ...其余官方文件
+```
+
+程序依次查找已记住的路径、EXE 旁的 `platform-tools` / `adb.exe`、Android SDK 和 PATH。
+支持识别 Scoop 的 ADB shim，实际运行原始程序以保证取消有效。
+缺少 ADB 时显示安装提示和官方下载链接，不会影响其他大类。
+带 `platform-tools` 的便携目录应整体复制到新电脑；USB 调试授权及设备所需驱动仍需配置。
+仓库不包含 Platform Tools 二进制，也不自动下载或安装驱动。
+
+参数与使用方式依据 [Android ADB 文档](https://developer.android.com/tools/adb) 和
+[AOSP 命令参考](https://android.googlesource.com/platform/packages/modules/adb/+/HEAD/docs/user/adb.1.md)。
 
 ## 网络调试
 
@@ -87,6 +127,8 @@ WSL 下运行界面测试：
 核心测试覆盖下载、代理、IP 风险解析、LAN 扫描、串口编码与真实 TCP/UDP 回环通信。
 界面测试使用模拟串口和本机回环 Socket，覆盖连接/断开、参数设置、单条/多条发送、
 TCP 定向/群发、暂停显示、循环、取消和错误清理；不会打开真实 COM 端口。
+ADB 测试使用单独编译的模拟设备程序，通过真实子进程验证参数传递、实时 stdout/stderr、
+中文及空格路径、文件/目录往返、失败退出码、取消与退出释放，不接触真实 Android 设备。
 测试报告、测试程序和预览图全部写到 `bin/`，不提交到仓库。
 真实串口设备的兼容性仍需按具体驱动和设备参数验证。
 
@@ -103,7 +145,10 @@ TCP 定向/群发、暂停显示、循环、取消和错误清理；不会打开
 | `SocketSession.cs` | UDP / TCP 客户端 / TCP 服务端通信与连接生命周期 |
 | `SocketPage.cs` | 独立网络调试页面 |
 | `SocketTests.cs` | Windows 本机回环通信测试 |
-| `tests/UiTests.cs` | 使用模拟串口与本机 Socket 的界面集成测试 |
+| `AdbClient.cs` | ADB 定位、进程执行、设备解析和路径参数 |
+| `AdbWorkspace.cs` | ADB 共用设备设置、Shell 与文件传输页面 |
+| `tests/UiTests.cs` | 串口、Socket、ADB 界面集成测试 |
+| `tests/AdbTests.cs` / `tests/FakeAdb.cs` | ADB 子进程与隔离的模拟设备测试 |
 
 详细用法见 [使用说明](使用说明.txt)。仓库仅包含源码、文档和构建脚本；
 二进制、编译中间产物、测试输出与本机设置已由 `.gitignore` 排除。
