@@ -1,0 +1,90 @@
+name: Release portable toolbox
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag, for example v3.3.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Validate version tag
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$') {
+            throw 'Use a version tag such as v3.3.0.'
+          }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - name: Build
+        run: |
+          cmd /c build.cmd
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+      - name: Core self-tests
+        run: |
+          $test = Start-Process -FilePath .\bin\Toolbox.exe -ArgumentList '--self-test' -PassThru -Wait
+          Get-Content .\bin\self-test.txt
+          if ($test.ExitCode -ne 0) { throw 'Core self-tests failed.' }
+      - name: UI and capture tests
+        run: |
+          cmd /c tests\run.cmd
+          if ($LASTEXITCODE -ne 0) { throw 'UI tests failed.' }
+      - name: Package EXE, Platform Tools and documentation
+        run: .\package.ps1 -Version $env:RELEASE_TAG.Substring(1)
+      - name: Publish portable ZIP and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $version = $env:RELEASE_TAG.Substring(1)
+          $archive = "bin/Toolbox-$version-portable.zip"
+          @"
+          ## 下载和使用
+          下载 **Toolbox-$version-portable.zip**，完整解压后运行 Toolbox.exe。
+          压缩包包含工具箱、使用说明及官方 Android Platform Tools 37.0.1（含 DLL 和许可证）。
+          适用于 Windows 10/11，需启用 .NET Framework 4.8；无需另装 ADB。
+
+          实时抓包需另行安装 [Npcap](https://npcap.com/#download)，压缩包不包含该驱动。
+          使用方法和功能范围见压缩包内的 README.md 和使用说明.txt。
+          附带 .sha256 校验文件；源码仓库不存放编译产物。
+
+          发布前已运行核心自测及界面集成测试。串口、ADB 和抓包使用模拟设备/数据测试，
+          TCP/UDP 使用本机回环；真实硬件及 Npcap 网卡抓包仍需在对应环境验证。
+          "@ | Set-Content -Path bin/release-notes.md -Encoding utf8
+          $releaseArgs = @('release', 'create', $env:RELEASE_TAG, $archive, "$archive.sha256", '--verify-tag', '--title', "Toolbox $version", '--notes-file', 'bin/release-notes.md')
+          if ($version.Contains('-')) { $releaseArgs += '--prerelease' }
+          gh @releaseArgs
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed; existing releases are never overwritten.' }
+      - name: Keep test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-reports-${{ env.RELEASE_TAG }}
+          path: |
+            bin/self-test.txt
+            bin/test-results/ui-test.txt
+            bin/test-results/preview-*.png
+          if-no-files-found: ignore
+          retention-days: 14

@@ -17,6 +17,8 @@ internal static class ToolboxUiTests
 {
     static readonly StringBuilder report = new StringBuilder();
     static readonly string output = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test-results");
+    static FakePacketSource packetSource;
+    static bool failCaptureCatalog;
 
     static T Field<T>(object target, string name)
     {
@@ -71,7 +73,7 @@ internal static class ToolboxUiTests
         var automatic = Field<Button>(workspace, "automatic");
         var timer = Field<Timer>(workspace, "sendTimer");
 
-        foreach (var id in new[] { "speed", "ip", "lan", "serial", "socket", "adb-shell", "adb-files", "speed" })
+        foreach (var id in new[] { "speed", "ip", "lan", "serial", "socket", "capture", "adb-shell", "adb-files", "speed" })
         {
             shell.ShowView(id);
             await Task.Delay(30);
@@ -79,7 +81,7 @@ internal static class ToolboxUiTests
             Assert(actions.Controls.Cast<Control>().All(c => c.Parent == actions), "left action placement");
             Capture(form, "preview-" + id + ".png");
         }
-        report.AppendLine("PASS seven pages, four independent categories and left action placement");
+        report.AppendLine("PASS eight pages, four independent categories and left action placement");
 
         var ip = Field<IpPage>(form, "ipPage");
         var routeButton = Field<Button>(ip, "settings");
@@ -122,6 +124,7 @@ internal static class ToolboxUiTests
         report.AppendLine("PASS network mutual exclusion survives navigation");
 
         await ExerciseSockets(form, shell);
+        await ExerciseCapture(form, shell);
         await ExerciseAdb(form, shell);
 
         shell.ShowView("serial");
@@ -446,7 +449,8 @@ internal static class ToolboxUiTests
         var outgoing = Field<TextBox>(page, "outgoing");
         var protocol = Field<ComboBox>(page, "protocol");
         Field<Button>(shell, "debug").PerformClick();
-        Assert(shell.CurrentView == "socket" && Field<FlowLayoutPanel>(shell, "pages").Controls.Count == 1, "dedicated network-debug category");
+        Assert(shell.CurrentView == "lan" && Field<FlowLayoutPanel>(shell, "pages").Controls.Count == 3, "network-debug category contains sockets, LAN scan and capture, and remembers the LAN scan page");
+        shell.ShowView("socket");
         Field<ComboBox>(page, "localAddress").Text = "127.0.0.1";
         Field<NumericUpDown>(page, "localPort").Value = 0;
         using (var remote = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)))
@@ -565,6 +569,50 @@ internal static class ToolboxUiTests
         connect.PerformClick();
         await Until(() => session.IsOpen, "listener before form shutdown");
         report.AppendLine("PASS real TCP UI client/server, client list, targeted/broadcast send and selected disconnect");
+    }
+
+    static async Task ExerciseCapture(SpeedForm form, ToolShell shell)
+    {
+        await CaptureTests.Run(Path.Combine(output, "capture-core-" + Guid.NewGuid().ToString("N")), report);
+        var page = Field<CapturePage>(form, "capturePage");
+        var list = Field<ListView>(page, "packets");
+        var start = Field<Button>(page, "start");
+        var stop = Field<Button>(page, "stop");
+        var pause = Field<CheckBox>(page, "pause");
+        var adapters = Field<ComboBox>(page, "adapters");
+        shell.ShowView("capture");
+        Assert(!page.Busy && !start.Enabled && packetSource == null, "no automatic enumeration or capture");
+        failCaptureCatalog = true; await page.RefreshAdapters();
+        Assert(!start.Enabled && Field<Label>(page, "notice").Text.Contains("simulated missing Npcap"), "missing dependency is visible");
+        failCaptureCatalog = false; await page.RefreshAdapters();
+        Assert(start.Enabled && adapters.SelectedIndex == 0, "single adapter selection");
+        start.PerformClick(); await Until(() => packetSource != null, "capture source opens");
+        Assert(page.Busy && stop.Enabled && !adapters.Enabled && !start.Enabled, "capture locks settings");
+        packetSource.Frames.Enqueue(CaptureTests.Tcp());
+        await Until(() => list.VirtualListSize == 1, "live packet display");
+        list.SelectedIndices.Add(0);
+        Assert(Field<TextBox>(page, "detail").Text.Contains("192.0.2.1:12345"), "selected packet HEX details");
+        Capture(form, "preview-capture-demo.png");
+        pause.Checked = true;
+        for (int i = 0; i < 2100; i++) packetSource.Frames.Enqueue(CaptureTests.Tcp());
+        await Until(() => Field<CaptureSession>(page, "session").Count == 2101, "paused capture continues writing");
+        Assert(list.VirtualListSize == 1, "pause freezes display only");
+        shell.ShowView("speed"); await Task.Delay(150);
+        Assert(page.Busy, "capture survives navigation");
+        shell.ShowView("capture"); pause.Checked = false;
+        await Until(() => list.VirtualListSize == 1000, "bounded recent-packet display resumes");
+        stop.PerformClick(); await Until(() => !page.Busy, "stop capture");
+        Assert(packetSource.Disposed && CaptureTests.ReadFile(Field<string>(page, "captureFile")) == 2101, "all packets saved despite display eviction");
+        Assert(Field<Button>(page, "save").Enabled && adapters.Enabled, "stopped capture can be saved and settings unlocked");
+        report.AppendLine("PASS capture UI: missing dependency, explicit start, live packets, HEX selection, pause/resume, hidden-page capture and bounded display with complete PCAP");
+        packetSource = null; start.PerformClick(); await Until(() => packetSource != null, "restart capture");
+        packetSource.Fail = true; await Until(() => !page.Busy, "read error stops capture");
+        Assert(packetSource.Disposed && Field<Label>(page, "notice").Text.Contains("simulated capture failure"), "error shown and source closed");
+        failCaptureCatalog = true; await page.RefreshAdapters();
+        Assert(adapters.Items.Count == 0 && !start.Enabled, "failed refresh clears stale adapter");
+        failCaptureCatalog = false; await page.RefreshAdapters();
+        packetSource = null; start.PerformClick(); await Until(() => packetSource != null, "capture running for form-close test");
+        report.AppendLine("PASS capture restart, error cleanup and stale adapter rejection");
     }
 
     static async Task ExerciseClearRecords(SerialWorkspace workspace, SerialSession session, Func<FakeSerialTransport> current)
@@ -710,8 +758,12 @@ internal static class ToolboxUiTests
         string fixture = Path.Combine(fixtureRoot, "adb.exe");
         File.Copy(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "adb-fixture", "adb.exe"), fixture);
         var adb = new AdbWorkspace(fixture, false);
+        var capture = new CapturePage(() => {
+            if (failCaptureCatalog) throw new IOException("simulated missing Npcap");
+            return new[] { new CaptureAdapter { Name = "fake", Description = "模拟网卡 · TEST DATA" } };
+        }, options => packetSource = new FakePacketSource(), Path.Combine(output, "capture-ui-" + Guid.NewGuid().ToString("N")));
         bool passed = false;
-        using (var form = new SpeedForm(session, adb))
+        using (var form = new SpeedForm(session, adb, capture))
         {
             var sockets = Field<SocketSession>(Field<SocketPage>(form, "socketPage"), "session");
             form.Shown += async delegate
@@ -721,7 +773,7 @@ internal static class ToolboxUiTests
                 form.Close();
             };
             Application.Run(form);
-            passed = passed && !sockets.IsOpen && !adb.Busy;
+            passed = passed && !sockets.IsOpen && !adb.Busy && !capture.Busy;
         }
         passed = passed && !session.IsOpen && fake != null && fake.Disposed;
         report.AppendLine(passed ? "PASS form close stops sending and releases serial transport" : "FAIL UI test or shutdown");
@@ -729,8 +781,12 @@ internal static class ToolboxUiTests
         bool adbClosed = File.Exists(pidFile) && ProcessExited(Int32.Parse(File.ReadAllText(pidFile)));
         passed = passed && adbClosed;
         report.AppendLine(adbClosed ? "PASS form close cancels and awaits the active ADB client" : "FAIL ADB process shutdown");
+        bool captureClosed = packetSource != null && packetSource.Disposed && !capture.Busy;
+        passed = passed && captureClosed;
+        report.AppendLine(captureClosed ? "PASS form close awaits capture and releases the source" : "FAIL capture shutdown");
         report.AppendLine("NOTE all serial I/O used a simulated transport; no real COM port was opened.");
         report.AppendLine("NOTE ADB used an isolated fixture executable and simulated device files; no real device was accessed.");
+        report.AppendLine("NOTE capture used synthetic packets; no real adapter was opened and Npcap is not required for these tests.");
         File.WriteAllText(Path.Combine(output, "ui-test.txt"), report.ToString(), Encoding.UTF8);
         return passed ? 0 : 1;
     }

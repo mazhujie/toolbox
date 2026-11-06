@@ -287,13 +287,14 @@ internal sealed class SpeedForm : Form
     readonly SerialWorkspace serialWorkspace;
     readonly SocketPage socketPage;
     readonly AdbWorkspace adbWorkspace;
+    readonly CapturePage capturePage;
     CancellationTokenSource running;
     readonly List<string[]> history = new List<string[]>();
     long previousBytes; double previousTime;
     public SpeedForm() : this(null) { }
-    internal SpeedForm(SerialSession serialConnection, AdbWorkspace adbTools = null)
+    internal SpeedForm(SerialSession serialConnection, AdbWorkspace adbTools = null, CapturePage captureTools = null)
     {
-        Text = "工具箱 3.2 · 网络服务 / 串口助手 / 网络调试 / ADB"; ClientSize = new Size(1034, 760);
+        Text = "工具箱 3.3.0 · 网络服务 / 串口助手 / 网络调试 / ADB"; ClientSize = new Size(1034, 760);
         MinimumSize = new Size(1050, 759); StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Microsoft YaHei UI", 10); BackColor = Color.FromArgb(245, 247, 251);
         var title = new Label { Text = "网络测速", Font = new Font(Font.FontFamily, 22, FontStyle.Bold), AutoSize = true, Location = new Point(24, 18) };
@@ -334,11 +335,13 @@ internal sealed class SpeedForm : Form
         serialWorkspace = new SerialWorkspace(serialConnection);
         socketPage = new SocketPage();
         adbWorkspace = adbTools ?? new AdbWorkspace();
+        capturePage = captureTools ?? new CapturePage();
         shell.Add("speed", "network", "下载测速", speedPage, start, stop, export);
         shell.Add("ip", "network", "出口 IP / 风险", ipPage, ipPage.Actions);
-        shell.Add("lan", "network", "局域网扫描", lanPage, lanPage.Actions);
         shell.Add("serial", "serial", "串口收发", serialWorkspace.Terminal, serialWorkspace.TerminalActions);
         shell.Add("socket", "debug", "TCP / UDP 收发", socketPage, socketPage.Actions);
+        shell.Add("lan", "debug", "局域网扫描", lanPage, lanPage.Actions);
+        shell.Add("capture", "debug", "实时抓包", capturePage, capturePage.Actions);
         shell.Add("adb-shell", "adb", "Shell 命令", adbWorkspace.ShellPage, adbWorkspace.ShellActions);
         shell.Add("adb-files", "adb", "文件传输", adbWorkspace.FilesPage, adbWorkspace.FileActions);
         Controls.Add(shell); shell.ShowView("speed");
@@ -347,7 +350,7 @@ internal sealed class SpeedForm : Form
             if (closing) return; closing = true; e.Cancel = true;
             if (running != null) running.Cancel(); ipPage.Cancel(); lanPage.Cancel();
             socketPage.Shutdown();
-            await Task.WhenAll(serialWorkspace.Shutdown(), adbWorkspace.Shutdown()); serialWorkspace.Dispose();
+            await Task.WhenAll(serialWorkspace.Shutdown(), adbWorkspace.Shutdown(), capturePage.Shutdown()); serialWorkspace.Dispose();
             if (!IsDisposed) BeginInvoke(new Action(Close));
         };
     }
@@ -358,6 +361,7 @@ internal sealed class SpeedForm : Form
             if (serialWorkspace != null) serialWorkspace.Dispose();
             if (socketPage != null) socketPage.Shutdown();
             if (adbWorkspace != null) adbWorkspace.Dispose();
+            if (capturePage != null) capturePage.Shutdown();
         }
         base.Dispose(disposing);
     }

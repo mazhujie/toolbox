@@ -12,6 +12,9 @@ test-results/
 *.cache
 *.log
 *.zip
+*.pcap
+*.pcapng
+*.etl
 *-test.txt
 preview*.png
 
