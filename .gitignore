@@ -1,0 +1,23 @@
+# Build and test output
+bin/
+obj/
+artifacts/
+TestResults/
+test-results/
+.vs/
+*.exe
+*.dll
+*.pdb
+*.obj
+*.cache
+*.log
+*.zip
+*-test.txt
+preview*.png
+
+# Local editor and user settings
+*.user
+*.suo
+.env
+.env.*
+!.env.example

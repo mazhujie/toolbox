@@ -1,0 +1,327 @@
+using System;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+internal static class ToolboxUiTests
+{
+    static readonly StringBuilder report = new StringBuilder();
+    static readonly string output = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test-results");
+
+    static T Field<T>(object target, string name)
+    {
+        return (T)target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(target);
+    }
+
+    static void Assert(bool condition, string message)
+    {
+        if (!condition) throw new Exception("FAIL " + message);
+    }
+
+    static async Task Until(Func<bool> ready, string name)
+    {
+        var timer = Stopwatch.StartNew();
+        while (!ready())
+        {
+            if (timer.ElapsedMilliseconds > 4000) throw new TimeoutException(name);
+            await Task.Delay(20);
+        }
+    }
+
+    static void Capture(Form form, string name)
+    {
+        using (var bitmap = new Bitmap(form.Width, form.Height))
+        {
+            form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+            bitmap.Save(Path.Combine(output, name));
+        }
+    }
+
+    static void ToggleAdvanced(LinkLabel link)
+    {
+        typeof(LinkLabel).GetMethod("OnLinkClicked", BindingFlags.Instance | BindingFlags.NonPublic)
+            .Invoke(link, new object[] { new LinkLabelLinkClickedEventArgs(link.Links[0]) });
+    }
+
+    static Options IpRoute(IpPage page)
+    {
+        return (Options)typeof(IpPage).GetMethod("ReadRoute", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(page, null);
+    }
+
+    static async Task Exercise(SpeedForm form, SerialSession session, Func<FakeSerialTransport> current, Func<SerialSettings> applied)
+    {
+        var shell = Field<ToolShell>(form, "shell");
+        var workspace = Field<SerialWorkspace>(form, "serialWorkspace");
+        var actions = Field<FlowLayoutPanel>(shell, "actions");
+        var ports = Field<ComboBox>(workspace, "ports");
+        var outgoing = Field<TextBox>(workspace, "outgoing");
+        var incoming = Field<TextBox>(workspace, "incoming");
+        var connect = Field<Button>(workspace, "connect");
+        var advanced = Field<LinkLabel>(workspace, "advancedToggle");
+        var automatic = Field<Button>(workspace, "automatic");
+        var timer = Field<Timer>(workspace, "sendTimer");
+
+        foreach (var id in new[] { "speed", "ip", "lan", "serial", "speed" })
+        {
+            shell.ShowView(id);
+            await Task.Delay(30);
+            Assert(shell.CurrentView == id && actions.Controls.Count >= 3, "navigation: " + id);
+            Assert(actions.Controls.Cast<Control>().All(c => c.Parent == actions), "left action placement");
+            Capture(form, "preview-" + id + ".png");
+        }
+        report.AppendLine("PASS four pages, category navigation and left action placement");
+
+        var ip = Field<IpPage>(form, "ipPage");
+        var routeButton = Field<Button>(ip, "settings");
+        var routeMenu = Field<ContextMenuStrip>(ip, "routeMenu");
+        var proxy = Field<TextBox>(ip, "proxy");
+        shell.ShowView("ip");
+        Assert(IpRoute(ip).Mode == 1, "IP defaults to Windows system proxy");
+        Field<ComboBox>(form, "mode").SelectedIndex = 2;
+        Field<TextBox>(form, "proxy").Text = "http://127.0.0.1:19999";
+        Assert(IpRoute(ip).Mode == 1 && IpRoute(ip).Proxy != "http://127.0.0.1:19999", "IP route independent from download settings");
+        Field<ComboBox>(form, "mode").SelectedIndex = 0;
+        routeButton.PerformClick();
+        Assert(routeMenu.Visible && ((ToolStripMenuItem)routeMenu.Items[1]).Checked, "connection menu and default selection");
+        routeMenu.Items[2].PerformClick();
+        routeMenu.Close();
+        Assert(proxy.Visible && proxy.Enabled && IpRoute(ip).Mode == 2, "manual proxy editor in IP page");
+        proxy.Text = " https://127.0.0.1:7888 ";
+        Field<Button>(ip, "query").PerformClick();
+        Assert(Field<Label>(ip, "summary").Text.Contains("代理格式"), "reject invalid proxy before networking");
+        proxy.Text = " http://127.0.0.1:7888 ";
+        Assert(IpRoute(ip).Proxy == "http://127.0.0.1:7888", "manual route input applied and trimmed");
+        Capture(form, "preview-ip-manual.png");
+        Field<IpCard>(ip, "proxied").ShowInfo(new IpInfo { Ip = "203.0.113.99", Risk = 55 });
+        routeMenu.Items[0].PerformClick();
+        Assert(!proxy.Visible && IpRoute(ip).Mode == 0 && Field<TextBox>(Field<IpCard>(ip, "proxied"), "address").Text == "—", "route change clears stale proxy result");
+        routeMenu.Items[1].PerformClick();
+        routeButton.Focus();
+        Capture(form, "preview-ip.png");
+        report.AppendLine("PASS IP system-proxy default, independent route menu, manual validation and stale-result reset");
+
+        typeof(SpeedForm).GetMethod("Busy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { true });
+        Assert(!Field<Button>(form, "start").Enabled, "moved speed action busy state");
+        Assert(!routeButton.Enabled && !proxy.Enabled, "IP route changes locked while network task runs");
+        routeMenu.Items[0].PerformClick();
+        Assert(IpRoute(ip).Mode == 1, "busy route cannot change through menu");
+        shell.ShowView("lan");
+        Assert(!Field<LanPage>(form, "lanPage").Actions[0].Enabled, "moved LAN action busy state");
+        typeof(SpeedForm).GetMethod("Busy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { false });
+        Assert(Field<LanPage>(form, "lanPage").Actions[0].Enabled, "LAN action restored");
+        report.AppendLine("PASS network mutual exclusion survives navigation");
+
+        shell.ShowView("serial");
+        Assert(Field<FlowLayoutPanel>(shell, "pages").Controls.Count == 1, "one serial page");
+        ports.SelectedIndex = -1;
+        Assert(!connect.Enabled, "connect unavailable without a port");
+        ports.Items.Clear();
+        ports.Items.Add("COM99");
+        ports.SelectedItem = "COM99";
+        Assert(connect.Enabled, "port selection enables connect");
+        int sendTop = outgoing.PointToScreen(Point.Empty).Y;
+        Assert(!Field<bool>(workspace, "advancedExpanded"), "advanced parameters initially collapsed");
+        ToggleAdvanced(advanced);
+        Assert(Field<Panel>(workspace, "advancedPanel").Visible && outgoing.PointToScreen(Point.Empty).Y == sendTop, "advanced parameters expand without moving send area");
+        Capture(form, "preview-serial-advanced.png");
+        Field<ComboBox>(workspace, "baud").Text = "9600";
+        Field<ComboBox>(workspace, "bits").SelectedItem = "7";
+        Field<ComboBox>(workspace, "parity").SelectedItem = "Even";
+        Field<ComboBox>(workspace, "stops").SelectedItem = "2";
+        Field<ComboBox>(workspace, "flow").SelectedIndex = 2;
+        Field<CheckBox>(workspace, "dtr").Checked = true;
+        Assert(!Field<CheckBox>(workspace, "rts").Enabled && Field<Label>(workspace, "config").Text.Contains("7E2"), "advanced parameter summary and RTS flow control");
+        connect.PerformClick();
+        await Until(() => session.IsOpen && connect.Enabled, "open simulated port");
+        Assert(!ports.Enabled && connect.Text == "断开串口", "connection toggle and settings lock");
+        Assert(applied().Baud == 9600 && applied().DataBits == 7 && applied().Parity == System.IO.Ports.Parity.Even && applied().StopBits == System.IO.Ports.StopBits.Two && applied().Dtr, "advanced settings reach serial transport");
+        connect.PerformClick();
+        await Until(() => !session.IsOpen && connect.Enabled && ports.Enabled, "disconnect via same button");
+        Assert(current().Disposed && connect.Text == "连接串口", "disconnect releases transport and restores connect action");
+        Field<ComboBox>(workspace, "baud").Text = "115200";
+        Field<ComboBox>(workspace, "bits").SelectedItem = "8";
+        Field<ComboBox>(workspace, "parity").SelectedItem = "None";
+        Field<ComboBox>(workspace, "stops").SelectedItem = "1";
+        Field<ComboBox>(workspace, "flow").SelectedIndex = 0;
+        Field<CheckBox>(workspace, "dtr").Checked = false;
+        ToggleAdvanced(advanced);
+        Field<Button>(workspace, "clear").PerformClick();
+        connect.PerformClick();
+        await Until(() => session.IsOpen && connect.Enabled, "reconnect after editing settings");
+        report.AppendLine("PASS inline serial settings, advanced foldout, applied parameters and single connect/disconnect action");
+
+        shell.ShowView("serial");
+        outgoing.Text = "界面演示：模拟串口回环，不代表真实设备数据。";
+        Field<ComboBox>(workspace, "newline").SelectedItem = "CRLF";
+        Field<Button>(workspace, "send").PerformClick();
+        await Until(() => incoming.Text.Contains("RX") && incoming.Text.Contains("界面演示"), "text send/receive");
+        Assert(current().Writes == 1, "one manual transmission");
+        Assert(incoming.Text.Contains("TX") && !incoming.Text.Contains("�"), "UTF-8 receive display");
+        Capture(form, "preview-serial-demo.png");
+
+        outgoing.Text = "AA BB 0D 0A";
+        Field<CheckBox>(workspace, "txHex").Checked = true;
+        Field<CheckBox>(workspace, "rxHex").Checked = true;
+        Field<Button>(workspace, "send").PerformClick();
+        await Until(() => current().Writes == 2 && incoming.Text.Contains("AA BB 0D 0A"), "HEX send/receive");
+        report.AppendLine("PASS actual UI open, settings lock, text/HEX send and receive (simulated transport)");
+
+        await ExerciseMultiSend(form, workspace, session, current);
+
+        Field<NumericUpDown>(workspace, "interval").Value = 100;
+        automatic.PerformClick();
+        await Until(() => current().Writes >= 4, "periodic transmission");
+        Assert(timer.Enabled && !outgoing.Enabled, "periodic payload lock");
+        shell.ShowView("speed");
+        int before = current().Writes;
+        await Until(() => current().Writes >= before + 2, "background periodic transmission");
+        Assert(session.IsOpen, "connection survives network navigation");
+        Field<Button>(shell, "serial").PerformClick();
+        Assert(shell.CurrentView == "serial", "remember serial subpage");
+        automatic.PerformClick();
+        await Until(() => !Field<bool>(workspace, "writing"), "finish in-flight write");
+        before = current().Writes;
+        await Task.Delay(260);
+        Assert(current().Writes == before && !timer.Enabled && outgoing.Enabled, "periodic stop");
+        report.AppendLine("PASS periodic sends, page switching, remembered subpage and stop");
+
+        shell.ShowView("speed");
+        current().Fault();
+        await Until(() => !session.IsOpen && current().Disposed, "background device failure cleanup");
+        shell.ShowView("serial");
+        await Until(() => connect.Enabled && connect.Text == "连接串口", "recover disconnected UI");
+        Assert(incoming.Text.Contains("fixture disconnect"), "device error visible");
+        connect.PerformClick();
+        await Until(() => session.IsOpen && connect.Enabled, "reopen after failure");
+        current().FailWrite = true;
+        Field<Button>(workspace, "send").PerformClick();
+        await Until(() => !session.IsOpen && connect.Enabled, "send failure closes port");
+        Assert(!timer.Enabled && current().Disposed, "write error cleanup");
+        report.AppendLine("PASS device disconnect on hidden page, reconnect and write failure cleanup");
+
+        connect.PerformClick();
+        await Until(() => session.IsOpen && connect.Enabled, "final open");
+        automatic.PerformClick();
+        await Until(() => current().Writes > 0, "final periodic send");
+        // Main closes this actual form while periodic sending is active.
+    }
+
+    static async Task ExerciseMultiSend(Form form, SerialWorkspace workspace, SerialSession session, Func<FakeSerialTransport> current)
+    {
+        var tabs = Field<TabControl>(workspace, "sendTabs");
+        var grid = Field<DataGridView>(workspace, "commands");
+        var send = Field<Button>(workspace, "send");
+        var automatic = Field<Button>(workspace, "automatic");
+        var connect = Field<Button>(workspace, "connect");
+        var interval = Field<NumericUpDown>(workspace, "interval");
+        var timer = Field<Timer>(workspace, "sendTimer");
+        tabs.SelectedIndex = 1;
+        Field<Button>(workspace, "clear").PerformClick();
+        typeof(SerialWorkspace).GetMethod("Info", BindingFlags.Instance | BindingFlags.NonPublic)
+            .Invoke(workspace, new object[] { "DEMO", "界面演示：模拟串口回环，不代表真实设备数据。" });
+        grid.Rows.Clear();
+        grid.Rows.Add(true, 1, "AT", false);
+        grid.Rows.Add(false, 2, "GG (unchecked invalid HEX)", true);
+        grid.Rows.Add(true, 3, "AA BB 0D 0A", true);
+        interval.Value = 100;
+        int before = current().Writes;
+        grid.CurrentCell = grid.Rows[1].Cells["Content"];
+        send.PerformClick();
+        Assert(!tabs.Enabled && send.Enabled && send.Text == "停止发送", "batch locks editor and exposes stop action");
+        await Until(() => !Field<bool>(workspace, "writing"), "selected batch completed");
+        var sent = current().Sent.ToArray().Skip(before).ToArray();
+        Assert(sent.Length == 2 && Encoding.UTF8.GetString(sent[0]) == "AT\r\n" && sent[1].SequenceEqual(new byte[] { 0xAA, 0xBB, 13, 10 }), "only checked rows, visual order, per-row HEX and text suffix");
+        grid.CurrentCell = grid.Rows[0].Cells["Content"];
+        grid.Rows[1].Cells["Content"].Value = "AA 55";
+        Capture(form, "preview-serial-multi-demo.png");
+        grid.Rows[1].Cells["Content"].Value = "GG (unchecked invalid HEX)";
+
+        grid.CurrentCell = grid.Rows[1].Cells["Selected"];
+        grid.BeginEdit(false);
+        ((DataGridViewCheckBoxCell)grid.CurrentCell).EditingCellFormattedValue = true;
+        grid.NotifyCurrentCellDirty(true);
+        Assert(Convert.ToBoolean(grid.CurrentCell.Value), "checkbox changes committed immediately");
+        before = current().Writes;
+        send.PerformClick();
+        Assert(current().Writes == before && Field<Label>(workspace, "notice").Text.Contains("第 2 条"), "validate entire selected batch before sending any bytes");
+        var tools = Field<FlowLayoutPanel>(workspace, "commandTools");
+        ((Button)tools.Controls[3]).PerformClick();
+        send.PerformClick();
+        Assert(current().Writes == before && Field<Label>(workspace, "notice").Text.Contains("请先勾选"), "empty selection sends nothing");
+        grid.Rows[0].Cells["Selected"].Value = true;
+        grid.Rows[2].Cells["Selected"].Value = true;
+        interval.Value = 300;
+        send.PerformClick();
+        await Until(() => current().Writes == before + 1, "first batch item");
+        send.PerformClick();
+        await Until(() => !Field<bool>(workspace, "writing"), "cancel between selected rows");
+        await Task.Delay(350);
+        Assert(current().Writes == before + 1, "stop skips unsent rows");
+        report.AppendLine("PASS multi-send selection/order, mixed text/HEX, immediate checkbox commit, prevalidation and cancellation");
+
+        interval.Value = 100;
+        before = current().Writes;
+        automatic.PerformClick();
+        await Until(() => current().Writes >= before + 4, "two multi-send cycles");
+        automatic.PerformClick();
+        await Until(() => !Field<bool>(workspace, "writing"), "stop multi-send cycle");
+        sent = current().Sent.ToArray().Skip(before).ToArray();
+        Assert(sent.Length >= 4 && sent[0].SequenceEqual(sent[2]) && sent[1].SequenceEqual(sent[3]) && !sent[0].SequenceEqual(sent[1]), "periodic rows cycle in order without overlap");
+        before = current().Writes;
+        await Task.Delay(250);
+        Assert(current().Writes == before && !timer.Enabled && current().PeakWrites == 1, "cycle stop and serialized writes");
+
+        interval.Value = 300;
+        send.PerformClick();
+        await Until(() => current().Writes == before + 1, "batch before disconnect");
+        connect.PerformClick();
+        await Until(() => !session.IsOpen && !Field<bool>(workspace, "writing") && connect.Enabled, "disconnect cancels batch");
+        await Task.Delay(350);
+        Assert(current().Writes == before + 1 && current().Disposed, "disconnect prevents remaining rows");
+        connect.PerformClick();
+        await Until(() => session.IsOpen && connect.Enabled, "reconnect after batch cancellation");
+
+        grid.Rows.Add(true, 4, "SHOULD_NOT_SEND", false);
+        current().FailAtWrite = 2;
+        interval.Value = 100;
+        send.PerformClick();
+        await Until(() => !session.IsOpen && !Field<bool>(workspace, "writing"), "batch write failure");
+        Assert(current().Writes == 1 && current().Disposed, "failure stops remaining rows and closes port");
+        connect.PerformClick();
+        await Until(() => session.IsOpen && connect.Enabled, "reconnect after failed batch");
+        tabs.SelectedIndex = 0;
+        report.AppendLine("PASS multi-send cyclic timing, disconnect cancellation and mid-batch failure cleanup");
+    }
+
+    [STAThread]
+    static int Main()
+    {
+        Directory.CreateDirectory(output);
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        FakeSerialTransport fake = null;
+        SerialSettings parameters = null;
+        var session = new SerialSession(settings => { parameters = settings; return fake = new FakeSerialTransport(); });
+        bool passed = false;
+        using (var form = new SpeedForm(session))
+        {
+            form.Shown += async delegate
+            {
+                try { await Exercise(form, session, () => fake, () => parameters); passed = true; }
+                catch (Exception ex) { report.AppendLine(ex.ToString()); }
+                form.Close();
+            };
+            Application.Run(form);
+        }
+        passed = passed && !session.IsOpen && fake != null && fake.Disposed;
+        report.AppendLine(passed ? "PASS form close stops sending and releases serial transport" : "FAIL UI test or shutdown");
+        report.AppendLine("NOTE all serial I/O used a simulated transport; no real COM port was opened.");
+        File.WriteAllText(Path.Combine(output, "ui-test.txt"), report.ToString(), Encoding.UTF8);
+        return passed ? 0 : 1;
+    }
+}
