@@ -278,6 +278,7 @@ internal sealed class SerialWorkspace : IDisposable
     readonly System.Windows.Forms.Timer displayTimer = new System.Windows.Forms.Timer { Interval = 100 }, sendTimer = new System.Windows.Forms.Timer();
     readonly SerialSession session; readonly SerialHistory history = new SerialHistory();
     readonly ConcurrentQueue<SerialRecord> queue = new ConcurrentQueue<SerialRecord>();
+    readonly object receiveLock = new object();
     long received, transmitted, dropped; int queuedBytes, handlingFault;
     bool changing, writing, shuttingDown, disposed, advancedExpanded;
     byte[][] repeatPayloads;
@@ -456,7 +457,7 @@ internal sealed class SerialWorkspace : IDisposable
         };
         send.Click += async delegate { await SendOnce(); };
         automatic.Click += delegate { ToggleAutomatic(); };
-        clear.Click += delegate { history.Clear(); Render(); };
+        clear.Click += delegate { ClearRecords(); };
         save.Click += delegate { SaveLog(); };
         refresh.Click += delegate { RefreshPorts(); };
         sendTabs.SelectedIndexChanged += delegate
@@ -474,14 +475,17 @@ internal sealed class SerialWorkspace : IDisposable
         foreach (var box in new[] { dtr, rts }) box.CheckedChanged += delegate { UpdateControls(); };
         session.Received += bytes =>
         {
-            Interlocked.Add(ref received, bytes.Length);
-            if (Interlocked.Add(ref queuedBytes, bytes.Length) > 1048576)
+            lock (receiveLock)
             {
-                Interlocked.Add(ref queuedBytes, -bytes.Length);
-                Interlocked.Add(ref dropped, bytes.Length);
-                return;
+                Interlocked.Add(ref received, bytes.Length);
+                if (Interlocked.Add(ref queuedBytes, bytes.Length) > 1048576)
+                {
+                    Interlocked.Add(ref queuedBytes, -bytes.Length);
+                    Interlocked.Add(ref dropped, bytes.Length);
+                    return;
+                }
+                queue.Enqueue(new SerialRecord { Kind = "RX", Bytes = bytes });
             }
-            queue.Enqueue(new SerialRecord { Kind = "RX", Bytes = bytes });
         };
         session.Faulted += error =>
         {
@@ -663,6 +667,30 @@ internal sealed class SerialWorkspace : IDisposable
     void StopAutomatic() { sendTimer.Stop(); repeatPayloads = null; repeatIndex = 0; }
     void Info(string kind, string message) { history.Add(new SerialRecord { Kind = kind, Message = message }); Render(); }
     void ShowError(string message) { Info("ERROR", message); notice.Text = message; }
+    void ClearRecords()
+    {
+        // Reset the queued data and RX counters together so an old receive event
+        // cannot enqueue its record after the reset.
+        lock (receiveLock)
+        {
+            SerialRecord item;
+            while (queue.TryDequeue(out item)) { }
+            Interlocked.Exchange(ref received, 0);
+            Interlocked.Exchange(ref queuedBytes, 0);
+            Interlocked.Exchange(ref dropped, 0);
+        }
+        Interlocked.Exchange(ref transmitted, 0);
+        history.Clear();
+        Render();
+        UpdateCounters();
+        save.Enabled = false;
+    }
+
+    void UpdateCounters()
+    {
+        counters.Text = "累计 RX  " + Interlocked.Read(ref received) + " 字节      TX  " + Interlocked.Read(ref transmitted) + " 字节" + (history.Trimmed ? "      仅保留最近 256 KB 记录" : "");
+    }
+
     void Drain()
     {
         SerialRecord item; bool changed = false; int bytes = 0;
@@ -676,7 +704,7 @@ internal sealed class SerialWorkspace : IDisposable
         long lost = Interlocked.Exchange(ref dropped, 0);
         if (lost > 0) { history.Add(new SerialRecord { Kind = "WARN", Message = "接收队列溢出，已丢弃 " + lost + " 字节的显示记录。" }); changed = true; }
         if (changed) Render();
-        counters.Text = "累计 RX  " + Interlocked.Read(ref received) + " 字节      TX  " + Interlocked.Read(ref transmitted) + " 字节" + (history.Trimmed ? "      仅保留最近 256 KB 记录" : "");
+        UpdateCounters();
         save.Enabled = history.Entries.Any();
     }
     void Render()
@@ -753,8 +781,13 @@ internal sealed class FakeSerialTransport : ISerialTransport
         if (!IsOpen || FailWrite || (FailAtWrite > 0 && Writes + 1 == FailAtWrite)) throw new IOException("fixture write failure");
         int active = Interlocked.Increment(ref ActiveWrites); PeakWrites = Math.Max(PeakWrites, active);
         Thread.Sleep(8); Writes++; Sent.Enqueue((byte[])data.Clone());
-        var handler = Received; if (handler != null) handler((byte[])data.Clone());
+        Receive(data);
         Interlocked.Decrement(ref ActiveWrites);
+    }
+    internal void Receive(byte[] data)
+    {
+        var handler = Received;
+        if (handler != null) handler((byte[])data.Clone());
     }
     public void Dispose() { IsOpen = false; Disposed = true; }
     internal void Fault() { var handler = Faulted; if (handler != null) handler("fixture disconnect"); }

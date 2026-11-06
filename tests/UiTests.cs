@@ -171,6 +171,8 @@ internal static class ToolboxUiTests
         await Until(() => current().Writes == 2 && incoming.Text.Contains("AA BB 0D 0A"), "HEX send/receive");
         report.AppendLine("PASS actual UI open, settings lock, text/HEX send and receive (simulated transport)");
 
+        await ExerciseClearRecords(workspace, session, current);
+
         await ExerciseMultiSend(form, workspace, session, current);
 
         Field<NumericUpDown>(workspace, "interval").Value = 100;
@@ -209,6 +211,48 @@ internal static class ToolboxUiTests
         automatic.PerformClick();
         await Until(() => current().Writes > 0, "final periodic send");
         // Main closes this actual form while periodic sending is active.
+    }
+
+    static async Task ExerciseClearRecords(SerialWorkspace workspace, SerialSession session, Func<FakeSerialTransport> current)
+    {
+        var displayTimer = Field<Timer>(workspace, "displayTimer");
+        var incoming = Field<TextBox>(workspace, "incoming");
+        var outgoing = Field<TextBox>(workspace, "outgoing");
+        var counters = Field<Label>(workspace, "counters");
+        var clear = Field<Button>(workspace, "clear");
+        var automatic = Field<Button>(workspace, "automatic");
+        string text = outgoing.Text;
+        Assert(Field<long>(workspace, "received") > 0 && Field<long>(workspace, "transmitted") > 0, "nonzero RX/TX before clear");
+        displayTimer.Stop();
+        await Task.Run(() =>
+        {
+            current().Receive(Encoding.UTF8.GetBytes("OLD-QUEUED"));
+            current().Receive(new byte[1048577]);
+        });
+        Assert(Field<int>(workspace, "queuedBytes") > 0 && Field<long>(workspace, "dropped") > 0, "receive data and overflow warning pending before clear");
+        clear.PerformClick();
+        Assert(incoming.TextLength == 0 && Field<long>(workspace, "received") == 0 && Field<long>(workspace, "transmitted") == 0, "clear resets visible history and both byte counts");
+        Assert(Field<int>(workspace, "queuedBytes") == 0 && Field<long>(workspace, "dropped") == 0, "clear discards pending data and overflow accounting");
+        Assert(counters.Text.Contains("RX  0 字节") && counters.Text.Contains("TX  0 字节") && !Field<Button>(workspace, "save").Enabled, "zero counts and empty log save state update immediately");
+        Assert(session.IsOpen && outgoing.Text == text, "clear preserves connection and send content");
+        displayTimer.Start();
+        await Task.Delay(150);
+        Assert(incoming.TextLength == 0 && Field<long>(workspace, "received") == 0, "old queued records do not reappear");
+
+        Field<Button>(workspace, "send").PerformClick();
+        await Until(() => !Field<bool>(workspace, "writing") && incoming.Text.Contains("RX"), "new traffic after clear");
+        Assert(Field<long>(workspace, "received") == 4 && Field<long>(workspace, "transmitted") == 4, "RX/TX restart from zero for new traffic");
+
+        Field<NumericUpDown>(workspace, "interval").Value = 100;
+        int before = current().Writes;
+        automatic.PerformClick();
+        await Until(() => current().Writes > before && !Field<bool>(workspace, "writing"), "periodic send before clear");
+        clear.PerformClick();
+        Assert(Field<Timer>(workspace, "sendTimer").Enabled && session.IsOpen, "clear leaves periodic sending active");
+        await Until(() => Field<long>(workspace, "transmitted") >= 4, "periodic counting restarts after clear");
+        automatic.PerformClick();
+        await Until(() => !Field<bool>(workspace, "writing"), "periodic send stopped after reset test");
+        report.AppendLine("PASS clear resets RX/TX, pending receive data and warnings; new traffic counts from zero without disconnecting or stopping periodic sending");
     }
 
     static async Task ExerciseMultiSend(Form form, SerialWorkspace workspace, SerialSession session, Func<FakeSerialTransport> current)
