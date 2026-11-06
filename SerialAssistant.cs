@@ -2,7 +2,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Globalization;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
@@ -189,79 +188,6 @@ internal sealed class SerialSession
         finally { gate.Release(); }
     }
 }
-internal sealed class SerialRecord
-{
-    public DateTime At = DateTime.Now; public string Kind, Message; public byte[] Bytes;
-}
-internal static class SerialCodec
-{
-    internal static Encoding EncodingFor(string name)
-    { return name == "GBK" ? Encoding.GetEncoding(936, EncoderFallback.ExceptionFallback, DecoderFallback.ReplacementFallback) : name == "ASCII" ? Encoding.GetEncoding(20127, EncoderFallback.ExceptionFallback, DecoderFallback.ReplacementFallback) : new UTF8Encoding(false, false); }
-    internal static byte[] Encode(string text, bool hex, string encoding, string newline)
-    {
-        byte[] result;
-        if (hex)
-        {
-            var output = new List<byte>();
-            foreach (var raw in Regex.Split(text.Trim(), "[\\s,;]+"))
-            {
-                if (raw.Length == 0) continue;
-                string part = raw.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? raw.Substring(2) : raw;
-                if (part.Length == 0 || part.Length % 2 != 0) throw new FormatException("HEX 必须是完整字节，例如 AA BB 0D 0A。");
-                for (int i = 0; i < part.Length; i += 2)
-                {
-                    byte value; if (!Byte.TryParse(part.Substring(i, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value)) throw new FormatException("HEX 中存在非十六进制字符。");
-                    output.Add(value); if (output.Count > 65536) throw new FormatException("单次发送最多 65,536 字节。");
-                }
-            }
-            result = output.ToArray();
-        }
-        else result = EncodingFor(encoding).GetBytes(text + (newline == "CRLF" ? "\r\n" : newline == "LF" ? "\n" : newline == "CR" ? "\r" : ""));
-        if (result.Length == 0 || result.Length > 65536) throw new FormatException("单次发送应为 1–65,536 字节。");
-        return result;
-    }
-    internal static string Render(IEnumerable<SerialRecord> records, bool hex, string encoding, bool timestamps, bool showTx)
-    {
-        var output = new StringBuilder(); var codec = EncodingFor(encoding); var decoder = codec.GetDecoder();
-        foreach (var item in records)
-        {
-            string content;
-            if (item.Bytes == null) { content = item.Message; if (item.Kind == "OPEN" || item.Kind == "CLOSE") decoder.Reset(); }
-            else
-            {
-                if (item.Kind == "TX" && !showTx) continue;
-                if (hex) content = BitConverter.ToString(item.Bytes).Replace('-', ' ');
-                else if (item.Kind == "RX")
-                {
-                    char[] chars = new char[codec.GetMaxCharCount(item.Bytes.Length)];
-                    int n = decoder.GetChars(item.Bytes, 0, item.Bytes.Length, chars, 0, false); content = new string(chars, 0, n);
-                }
-                else content = codec.GetString(item.Bytes);
-            }
-            if (String.IsNullOrEmpty(content)) continue;
-            if (timestamps) output.Append('[').Append(item.At.ToString("HH:mm:ss.fff")).Append("] ");
-            output.Append(item.Kind).Append("  ").Append(content);
-            if (!content.EndsWith("\n")) output.AppendLine();
-        }
-        return output.ToString();
-    }
-}
-internal sealed class SerialHistory
-{
-    internal const int Limit = 262144;
-    readonly Queue<SerialRecord> entries = new Queue<SerialRecord>(); int bytes;
-    internal bool Trimmed;
-    internal IEnumerable<SerialRecord> Entries { get { return entries; } }
-    internal int ByteCount { get { return bytes; } }
-    static int Size(SerialRecord item) { return item.Bytes == null ? (item.Message ?? "").Length * 2 + 32 : item.Bytes.Length; }
-    internal void Add(SerialRecord item)
-    {
-        entries.Enqueue(item); bytes += Size(item);
-        while (bytes > Limit || entries.Count > 4000) { bytes -= Size(entries.Dequeue()); Trimmed = true; }
-    }
-    internal void Clear() { entries.Clear(); bytes = 0; Trimmed = false; }
-}
-
 internal sealed class SerialWorkspace : IDisposable
 {
     internal readonly UserControl Terminal = new UserControl();
@@ -276,8 +202,8 @@ internal sealed class SerialWorkspace : IDisposable
     readonly Label state = new Label(), config = new Label(), counters = new Label(), notice = new Label();
     readonly Button connect = new Button(), send = new Button(), automatic = new Button(), clear = new Button(), save = new Button(), refresh = new Button();
     readonly System.Windows.Forms.Timer displayTimer = new System.Windows.Forms.Timer { Interval = 100 }, sendTimer = new System.Windows.Forms.Timer();
-    readonly SerialSession session; readonly SerialHistory history = new SerialHistory();
-    readonly ConcurrentQueue<SerialRecord> queue = new ConcurrentQueue<SerialRecord>();
+    readonly SerialSession session; readonly DataHistory history = new DataHistory();
+    readonly ConcurrentQueue<DataRecord> queue = new ConcurrentQueue<DataRecord>();
     readonly object receiveLock = new object();
     long received, transmitted, dropped; int queuedBytes, handlingFault;
     bool changing, writing, shuttingDown, disposed, advancedExpanded;
@@ -484,7 +410,7 @@ internal sealed class SerialWorkspace : IDisposable
                     Interlocked.Add(ref dropped, bytes.Length);
                     return;
                 }
-                queue.Enqueue(new SerialRecord { Kind = "RX", Bytes = bytes });
+                queue.Enqueue(new DataRecord { Kind = "RX", Bytes = bytes });
             }
         };
         session.Faulted += error =>
@@ -567,7 +493,7 @@ internal sealed class SerialWorkspace : IDisposable
 
     byte[][] Payloads()
     {
-        if (!MultiSend) return new[] { SerialCodec.Encode(outgoing.Text, txHex.Checked, encoding.Text, newline.Text) };
+        if (!MultiSend) return new[] { DataCodec.Encode(outgoing.Text, txHex.Checked, encoding.Text, newline.Text) };
         if (!commands.EndEdit()) throw new FormatException("请先完成发送内容的编辑。");
         var result = new List<byte[]>();
         int size = 0;
@@ -577,7 +503,7 @@ internal sealed class SerialWorkspace : IDisposable
             byte[] bytes;
             try
             {
-                bytes = SerialCodec.Encode(Convert.ToString(row.Cells["Content"].Value),
+                bytes = DataCodec.Encode(Convert.ToString(row.Cells["Content"].Value),
                     Convert.ToBoolean(row.Cells["Hex"].Value ?? false), encoding.Text, newline.Text);
             }
             catch (Exception ex) { throw new FormatException("第 " + (row.Index + 1) + " 条：" + ex.Message, ex); }
@@ -627,7 +553,7 @@ internal sealed class SerialWorkspace : IDisposable
     {
         await session.Send(data);
         Interlocked.Add(ref transmitted, data.Length);
-        history.Add(new SerialRecord { Kind = "TX", Bytes = (byte[])data.Clone() });
+        history.Add(new DataRecord { Kind = "TX", Bytes = (byte[])data.Clone() });
         Render();
     }
     async Task WritePayload(byte[] data)
@@ -665,7 +591,7 @@ internal sealed class SerialWorkspace : IDisposable
         catch (Exception ex) { notice.Text = ex.Message; }
     }
     void StopAutomatic() { sendTimer.Stop(); repeatPayloads = null; repeatIndex = 0; }
-    void Info(string kind, string message) { history.Add(new SerialRecord { Kind = kind, Message = message }); Render(); }
+    void Info(string kind, string message) { history.Add(new DataRecord { Kind = kind, Message = message }); Render(); }
     void ShowError(string message) { Info("ERROR", message); notice.Text = message; }
     void ClearRecords()
     {
@@ -673,7 +599,7 @@ internal sealed class SerialWorkspace : IDisposable
         // cannot enqueue its record after the reset.
         lock (receiveLock)
         {
-            SerialRecord item;
+            DataRecord item;
             while (queue.TryDequeue(out item)) { }
             Interlocked.Exchange(ref received, 0);
             Interlocked.Exchange(ref queuedBytes, 0);
@@ -693,8 +619,8 @@ internal sealed class SerialWorkspace : IDisposable
 
     void Drain()
     {
-        SerialRecord item; bool changed = false; int bytes = 0;
-        while (bytes < SerialHistory.Limit && queue.TryDequeue(out item))
+        DataRecord item; bool changed = false; int bytes = 0;
+        while (bytes < DataHistory.Limit && queue.TryDequeue(out item))
         {
             Interlocked.Add(ref queuedBytes, -item.Bytes.Length);
             bytes += item.Bytes.Length;
@@ -702,7 +628,7 @@ internal sealed class SerialWorkspace : IDisposable
             changed = true;
         }
         long lost = Interlocked.Exchange(ref dropped, 0);
-        if (lost > 0) { history.Add(new SerialRecord { Kind = "WARN", Message = "接收队列溢出，已丢弃 " + lost + " 字节的显示记录。" }); changed = true; }
+        if (lost > 0) { history.Add(new DataRecord { Kind = "WARN", Message = "接收队列溢出，已丢弃 " + lost + " 字节的显示记录。" }); changed = true; }
         if (changed) Render();
         UpdateCounters();
         save.Enabled = history.Entries.Any();
@@ -711,7 +637,7 @@ internal sealed class SerialWorkspace : IDisposable
     {
         if (Terminal.IsDisposed || encoding.SelectedIndex < 0) return;
         int selection = incoming.SelectionStart;
-        incoming.Text = (history.Trimmed ? "[仅显示最近 256 KB，较早记录已裁剪]\r\n" : "") + SerialCodec.Render(history.Entries, rxHex.Checked, encoding.Text, timestamps.Checked, showTx.Checked);
+        incoming.Text = (history.Trimmed ? "[仅显示最近 256 KB，较早记录已裁剪]\r\n" : "") + DataCodec.Render(history.Entries, rxHex.Checked, encoding.Text, timestamps.Checked, showTx.Checked);
         incoming.SelectionStart = autoscroll.Checked ? incoming.TextLength : Math.Min(selection, incoming.TextLength);
         incoming.SelectionLength = 0; incoming.ScrollToCaret();
     }
@@ -797,19 +723,19 @@ internal static class SerialTests
     static void Assert(bool condition, string message) { if (!condition) throw new Exception("FAIL serial: " + message); }
     internal static async Task<string> Run()
     {
-        Assert(SerialCodec.Encode("0xAA BB,0D0A", true, "UTF-8", "CRLF").SequenceEqual(new byte[] { 0xAA, 0xBB, 13, 10 }), "HEX exact bytes; no implicit suffix");
-        Assert(Encoding.UTF8.GetString(SerialCodec.Encode("中文", false, "UTF-8", "CRLF")) == "中文\r\n", "UTF-8 plus newline");
+        Assert(DataCodec.Encode("0xAA BB,0D0A", true, "UTF-8", "CRLF").SequenceEqual(new byte[] { 0xAA, 0xBB, 13, 10 }), "HEX exact bytes; no implicit suffix");
+        Assert(Encoding.UTF8.GetString(DataCodec.Encode("中文", false, "UTF-8", "CRLF")) == "中文\r\n", "UTF-8 plus newline");
         foreach (string text in new[] { "A", "0xZZ", "0x", "" })
-        { bool failed = false; try { SerialCodec.Encode(text, true, "UTF-8", "无"); } catch (FormatException) { failed = true; } Assert(failed, "invalid HEX rejection"); }
-        bool asciiFailed = false; try { SerialCodec.Encode("中文", false, "ASCII", "无"); } catch (EncoderFallbackException) { asciiFailed = true; }
+        { bool failed = false; try { DataCodec.Encode(text, true, "UTF-8", "无"); } catch (FormatException) { failed = true; } Assert(failed, "invalid HEX rejection"); }
+        bool asciiFailed = false; try { DataCodec.Encode("中文", false, "ASCII", "无"); } catch (EncoderFallbackException) { asciiFailed = true; }
         Assert(asciiFailed, "unsupported ASCII characters are not silently replaced");
         byte[] chinese = Encoding.UTF8.GetBytes("中文");
-        var records = new[] { new SerialRecord { Kind = "RX", Bytes = chinese.Take(2).ToArray() }, new SerialRecord { Kind = "TX", Bytes = Encoding.UTF8.GetBytes("ok") }, new SerialRecord { Kind = "RX", Bytes = chinese.Skip(2).ToArray() } };
-        string rendered = SerialCodec.Render(records, false, "UTF-8", false, true);
+        var records = new[] { new DataRecord { Kind = "RX", Bytes = chinese.Take(2).ToArray() }, new DataRecord { Kind = "TX", Bytes = Encoding.UTF8.GetBytes("ok") }, new DataRecord { Kind = "RX", Bytes = chinese.Skip(2).ToArray() } };
+        string rendered = DataCodec.Render(records, false, "UTF-8", false, true);
         Assert(rendered.Contains("中文") && !rendered.Contains("�"), "UTF-8 decoder preserves fragmented receive bytes");
-        Assert(SerialCodec.Render(records, true, "UTF-8", false, true).Contains("E4 B8"), "HEX receive formatting");
-        var history = new SerialHistory(); for (int i = 0; i < 80; i++) history.Add(new SerialRecord { Kind = "RX", Bytes = new byte[4096] });
-        Assert(history.Trimmed && history.ByteCount <= SerialHistory.Limit, "bounded log retention");
+        Assert(DataCodec.Render(records, true, "UTF-8", false, true).Contains("E4 B8"), "HEX receive formatting");
+        var history = new DataHistory(); for (int i = 0; i < 80; i++) history.Add(new DataRecord { Kind = "RX", Bytes = new byte[4096] });
+        Assert(history.Trimmed && history.ByteCount <= DataHistory.Limit, "bounded log retention");
         var fake = new FakeSerialTransport(); var session = new SerialSession(s => fake); var echoed = new ConcurrentQueue<byte[]>();
         session.Received += bytes => echoed.Enqueue(bytes);
         await session.Open(new SerialSettings { PortName = "COM99" });

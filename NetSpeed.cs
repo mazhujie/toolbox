@@ -285,13 +285,14 @@ internal sealed class SpeedForm : Form
     readonly LanPage lanPage;
     readonly ToolShell shell;
     readonly SerialWorkspace serialWorkspace;
+    readonly SocketPage socketPage;
     CancellationTokenSource running;
     readonly List<string[]> history = new List<string[]>();
     long previousBytes; double previousTime;
     public SpeedForm() : this(null) { }
     internal SpeedForm(SerialSession serialConnection)
     {
-        Text = "工具箱 2.2.1 · 网络服务 / 串口助手"; ClientSize = new Size(1034, 760);
+        Text = "工具箱 3.0 · 网络服务 / 串口助手 / 网络调试"; ClientSize = new Size(1034, 760);
         MinimumSize = new Size(1050, 759); StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Microsoft YaHei UI", 10); BackColor = Color.FromArgb(245, 247, 251);
         var title = new Label { Text = "网络测速", Font = new Font(Font.FontFamily, 22, FontStyle.Bold), AutoSize = true, Location = new Point(24, 18) };
@@ -330,20 +331,31 @@ internal sealed class SpeedForm : Form
         ipPage = new IpPage(Busy);
         lanPage = new LanPage(Busy);
         serialWorkspace = new SerialWorkspace(serialConnection);
+        socketPage = new SocketPage();
         shell.Add("speed", "network", "下载测速", speedPage, start, stop, export);
         shell.Add("ip", "network", "出口 IP / 风险", ipPage, ipPage.Actions);
         shell.Add("lan", "network", "局域网扫描", lanPage, lanPage.Actions);
         shell.Add("serial", "serial", "串口收发", serialWorkspace.Terminal, serialWorkspace.TerminalActions);
+        shell.Add("socket", "debug", "TCP / UDP 收发", socketPage, socketPage.Actions);
         Controls.Add(shell); shell.ShowView("speed");
         bool closing = false;
         FormClosing += async delegate(object sender, FormClosingEventArgs e) {
             if (closing) return; closing = true; e.Cancel = true;
             if (running != null) running.Cancel(); ipPage.Cancel(); lanPage.Cancel();
+            socketPage.Shutdown();
             await serialWorkspace.Shutdown(); serialWorkspace.Dispose();
             if (!IsDisposed) BeginInvoke(new Action(Close));
         };
     }
-    protected override void Dispose(bool disposing) { if (disposing && serialWorkspace != null) serialWorkspace.Dispose(); base.Dispose(disposing); }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            if (serialWorkspace != null) serialWorkspace.Dispose();
+            if (socketPage != null) socketPage.Shutdown();
+        }
+        base.Dispose(disposing);
+    }
     void AddLabel(string text, int x, int y) { var l = new Label { Text = text, AutoSize = true, Location = new Point(x, y) }; Controls.Add(l); }
     void Ui(Action action) { if (!IsDisposed && IsHandleCreated) { try { BeginInvoke(action); } catch (InvalidOperationException) { } } }
     void Busy(bool yes)
@@ -548,6 +560,7 @@ internal static class Program
         report.Append(await IpTests.Run());
         report.Append(await LanTests.Run());
         report.Append(await SerialTests.Run());
+        report.Append(await SocketTests.Run());
         return report.ToString();
     }
 }
