@@ -294,7 +294,7 @@ internal sealed class SpeedForm : Form
     public SpeedForm() : this(null) { }
     internal SpeedForm(SerialSession serialConnection, AdbWorkspace adbTools = null, CapturePage captureTools = null)
     {
-        Text = "工具箱 3.3.0 · 网络服务 / 串口助手 / 网络调试 / ADB"; ClientSize = new Size(1034, 760);
+        Text = "工具箱 3.3.1 · 网络服务 / 串口助手 / 网络调试 / ADB"; ClientSize = new Size(1034, 760);
         MinimumSize = new Size(1050, 759); StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Microsoft YaHei UI", 10); BackColor = Color.FromArgb(245, 247, 251);
         var title = new Label { Text = "网络测速", Font = new Font(Font.FontFamily, 22, FontStyle.Bold), AutoSize = true, Location = new Point(24, 18) };

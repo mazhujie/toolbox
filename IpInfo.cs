@@ -16,11 +16,30 @@ using System.Windows.Forms;
 
 internal sealed class IpInfo
 {
-    public string Ip, Location, Isp, Asn, Provider, Warning, RiskLevel;
+    public string Ip, Location, Isp, Asn, Provider, Warning, RiskLevel, ConnectionType;
     public string RiskProvider = "Scamalytics";
     public double? Risk;
-    public bool? Vpn, Proxy, Tor, Datacenter, Mobile, Blacklisted;
+    public bool? Vpn, Proxy, Tor, Datacenter, Mobile, Blacklisted, ResidentialProxy;
     public DateTime CheckedAt;
+    internal string NetworkType
+    {
+        get
+        {
+            if (Datacenter == true) return "机房 IP";
+            if (ResidentialProxy == true) return "住宅代理 IP";
+            // A negative datacenter flag alone does not establish a residential connection.
+            if (Datacenter == false)
+            {
+                switch ((ConnectionType ?? "").Trim().ToLowerInvariant())
+                {
+                    case "residential": return "住宅 IP";
+                    case "cable": case "dsl": case "cable/dsl": case "fiber": case "fttx": return "疑似住宅 IP";
+                    case "mobile": case "cellular": return "移动网络 IP";
+                }
+            }
+            return "未知";
+        }
+    }
 }
 
 internal static class IpLookup
@@ -90,7 +109,10 @@ internal static class IpLookup
             info.RiskLevel = labels[level.Groups[1].Value.ToLowerInvariant()];
         }
         info.Datacenter = YesNo(Cell(html, "Datacenter")); info.Vpn = YesNo(Cell(html, "Anonymizing VPN")); info.Tor = YesNo(Cell(html, "Tor Exit Node"));
-        var proxies = new[] { YesNo(Cell(html, "Public Proxy")), YesNo(Cell(html, "Web Proxy")), YesNo(Cell(html, "Residential Proxy")) };
+        string connection = Cell(html, "Connection type");
+        info.ConnectionType = String.IsNullOrEmpty(connection) || String.Equals(connection, "n/a", StringComparison.OrdinalIgnoreCase) ? null : connection.Substring(0, Math.Min(200, connection.Length));
+        info.ResidentialProxy = YesNo(Cell(html, "Residential Proxy"));
+        var proxies = new[] { YesNo(Cell(html, "Public Proxy")), YesNo(Cell(html, "Web Proxy")), info.ResidentialProxy };
         info.Proxy = proxies.Any(v => v == true) ? true : proxies.All(v => v == false) ? (bool?)false : null;
         var blacklist = Match(html, "[\"']is_blacklisted_external[\"']\\s*:\\s*(true|false)\\b");
         if (blacklist.Success) info.Blacklisted = blacklist.Groups[1].Value.ToLowerInvariant() == "true";
@@ -158,7 +180,7 @@ internal static class IpLookup
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                info.Risk = null; info.RiskLevel = null; info.Vpn = info.Proxy = info.Tor = info.Datacenter = info.Mobile = info.Blacklisted = null;
+                info.Risk = null; info.RiskLevel = info.ConnectionType = null; info.Vpn = info.Proxy = info.Tor = info.Datacenter = info.Mobile = info.Blacklisted = info.ResidentialProxy = null;
                 info.Warning = (info.Warning ?? "") + "\r\nScamalytics 查询失败：" + ex.Message + " 风险分保持未知。";
             }
         }
@@ -170,26 +192,30 @@ internal static class IpLookup
 internal sealed class IpCard : Panel
 {
     readonly TextBox address = new TextBox(), details = new TextBox();
-    readonly Label score = new Label();
+    readonly Label score = new Label(), networkType = new Label();
     public IpCard(string name)
     {
-        Size = new Size(360, 360); BackColor = Color.White; BorderStyle = BorderStyle.FixedSingle;
+        Size = new Size(360, 396); BackColor = Color.White; BorderStyle = BorderStyle.FixedSingle;
         var title = new Label { Text = name, Font = new Font("Microsoft YaHei UI", 13, FontStyle.Bold), Location = new Point(14, 14), Size = new Size(328, 28) };
         address.SetBounds(14, 52, 328, 58); address.Multiline = true; address.ReadOnly = true; address.BorderStyle = BorderStyle.None;
         address.BackColor = Color.White; address.Font = new Font("Segoe UI", 17, FontStyle.Bold); address.Text = "—";
         score.SetBounds(14, 120, 328, 30); score.Font = new Font("Microsoft YaHei UI", 14, FontStyle.Bold); score.ForeColor = Color.FromArgb(35, 96, 207);
-        details.SetBounds(14, 162, 328, 180); details.Multiline = true; details.ReadOnly = true; details.BorderStyle = BorderStyle.None;
+        networkType.SetBounds(14, 154, 328, 28); networkType.Font = new Font("Microsoft YaHei UI", 12, FontStyle.Bold);
+        details.SetBounds(14, 194, 328, 184); details.Multiline = true; details.ReadOnly = true; details.BorderStyle = BorderStyle.None;
         details.BackColor = Color.White; details.ScrollBars = ScrollBars.Vertical; details.Font = new Font("Microsoft YaHei UI", 10);
-        Controls.AddRange(new Control[] { title, address, score, details }); Reset("点击“查询出口 IP”后显示结果。");
+        Controls.AddRange(new Control[] { title, address, score, networkType, details }); Reset("点击“查询出口 IP”后显示结果。");
     }
-    internal void Reset(string message) { address.Text = "—"; score.Text = "Scamalytics：未知"; details.Text = message; }
+    internal void Reset(string message) { address.Text = "—"; score.Text = "Scamalytics：未知"; networkType.Text = "IP 类型：未知"; details.Text = message; }
     static string Known(string value) { return String.IsNullOrEmpty(value) ? "未知" : value; }
     static string Flag(bool? value) { return value.HasValue ? (value.Value ? "已标记" : "未标记") : "未知"; }
     internal void ShowInfo(IpInfo info)
     {
         address.Text = info.Ip;
+        networkType.Text = "IP 类型：" + info.NetworkType;
         score.Text = info.Risk.HasValue ? "Scamalytics：" + info.Risk.Value.ToString("0.##") + " / 100" : "Scamalytics：未知";
-        details.Text = "归属地：" + Known(info.Location) + "\r\n运营商：" + Known(info.Isp) + "\r\nASN：" + Known(info.Asn)
+        details.Text = "类型依据：Scamalytics（公开网页）"
+            + "\r\n连接类型：" + Known(info.ConnectionType) + "    住宅代理：" + Flag(info.ResidentialProxy)
+            + "\r\n归属地：" + Known(info.Location) + "\r\n运营商：" + Known(info.Isp) + "\r\nASN：" + Known(info.Asn)
             + "\r\n风险等级：" + Known(info.RiskLevel) + "    机房：" + Flag(info.Datacenter)
             + "\r\nVPN：" + Flag(info.Vpn) + "    代理：" + Flag(info.Proxy) + "\r\nTor：" + Flag(info.Tor)
             + "\r\n外部黑名单：" + Flag(info.Blacklisted)
@@ -234,9 +260,9 @@ internal sealed class IpPage : UserControl
         Controls.AddRange(new Control[] { query, cancel, settings });
         direct.Location = new Point(24, 126); proxied.Location = new Point(408, 126); Controls.AddRange(new Control[] { direct, proxied });
         summary.SetBounds(24, 506, 744, 42); summary.Text = "选择系统或手动代理后，可同时查询直连和代理出口。"; Controls.Add(summary);
-        note.Text = "风险分取自 Scamalytics 网页的 Fraud Score（0–100，越高风险越高）。\n遇到验证、限流或数据缺失时显示未知；未标记不代表绝对安全。\n分流可能改变出口；直连仅禁用 HTTP 代理，TUN / VPN 仍可能接管流量。";
+        note.Text = "风险分取自 Scamalytics 网页的 Fraud Score（0–100，越高风险越高）。\nIP 类型依据该站标记；宽带类型仅推测住宅，未标记机房不等于住宅。\n遇到验证、限流或数据缺失时显示未知；住宅 IP 不代表低风险。\n分流可能改变出口；直连仅禁用 HTTP 代理，TUN / VPN 仍可能接管流量。";
         note.ForeColor = Color.DimGray;
-        note.SetBounds(24, 558, 744, 66); Controls.Add(note);
+        note.SetBounds(24, 558, 744, 88); Controls.Add(note);
         query.Click += async delegate { await QueryBoth(); }; cancel.Click += delegate { Cancel(); };
         RefreshRoute();
     }
@@ -328,14 +354,15 @@ internal sealed class IpPage : UserControl
 internal static class IpTests
 {
     static void Assert(bool value, string name) { if (!value) throw new Exception("FAIL IP: " + name); }
-    internal static string Page(string ip, int score = 71)
+    internal static string Page(string ip, int score = 71, string connectionType = "", string datacenter = "Yes", string residentialProxy = "No")
     {
         return "<html><h1>" + ip + " Fraud Risk</h1><!-- <div class=\"score\">Fraud Score: 99</div> -->"
             + "<div class=\"panel_title high_risk\">" + (score == 0 ? "Low" : "High") + " Risk</div><div class=\"score\">Fraud Score: " + score + "</div>"
             + "<pre>\"is_blacklisted_external\": false</pre><table>"
-            + "<tr><th>Datacenter</th><td><div>Yes</div></td></tr>"
+            + "<tr><th>Connection type</th><td>" + WebUtility.HtmlEncode(connectionType) + "</td></tr>"
+            + "<tr><th>Datacenter</th><td><div>" + datacenter + "</div></td></tr>"
             + "<tr><th>Anonymizing VPN</th><td>No</td></tr><tr><th>Tor Exit Node</th><td>No</td></tr>"
-            + "<tr><th>Public Proxy</th><td>Yes</td></tr><tr><th>Web Proxy</th><td>No</td></tr><tr><th>Residential Proxy</th><td>No</td></tr></table></html>";
+            + "<tr><th>Public Proxy</th><td>Yes</td></tr><tr><th>Web Proxy</th><td>No</td></tr><tr><th>Residential Proxy</th><td>" + residentialProxy + "</td></tr></table></html>";
     }
     internal static async Task<string> Run()
     {
@@ -343,6 +370,25 @@ internal static class IpTests
         Assert(zero.Risk == null && zero.Vpn == null, "IPQuery risk is never used");
         IpLookup.ApplyScamalytics(zero, Page(zero.Ip, 0));
         Assert(zero.Risk == 0 && zero.Vpn == false && zero.Mobile == null && zero.Proxy == true && zero.Blacklisted == false, "Scamalytics zero, flags, missing fields");
+        string[,] types = {
+            { "n/a", "Yes", "No", "机房 IP" }, { "cable", "Yes", "Yes", "机房 IP" },
+            { "residential", "No", "No", "住宅 IP" }, { " Cable ", "No", "No", "疑似住宅 IP" },
+            { "dsl", "No", "No", "疑似住宅 IP" }, { "fiber", "No", "No", "疑似住宅 IP" },
+            { "mobile", "No", "No", "移动网络 IP" }, { "cellular", "No", "No", "移动网络 IP" },
+            { "n/a", "No", "Yes", "住宅代理 IP" }, { "n/a", "", "Yes", "住宅代理 IP" },
+            { "n/a", "No", "No", "未知" }, { "corporate", "No", "No", "未知" },
+            { "", "", "", "未知" }, { "cable", "", "No", "未知" }, { "not residential", "No", "No", "未知" }
+        };
+        for (int i = 0; i < types.GetLength(0); i++)
+        {
+            var info = new IpInfo { Ip = zero.Ip };
+            IpLookup.ApplyScamalytics(info, Page(info.Ip, 99, types[i, 0], types[i, 1], types[i, 2]));
+            Assert(info.NetworkType == types[i, 3] && info.Risk == 99, "network classification uses explicit evidence independently of risk: " + i);
+        }
+        var missingType = new IpInfo { Ip = zero.Ip };
+        string noFields = "<h1>" + zero.Ip + " Fraud Risk</h1><div class=\"score\">Fraud Score: 0</div>";
+        IpLookup.ApplyScamalytics(missingType, noFields + "<!-- <th>Datacenter</th><td>No</td><th>Connection type</th><td>residential</td> -->");
+        Assert(missingType.NetworkType == "未知" && missingType.ConnectionType == null && missingType.ResidentialProxy == null, "missing and commented fields cannot imply residential");
         foreach (var html in new[] { Page("203.0.113.9"), Page(zero.Ip, 999), "<html>Verify you are human</html>", "<h1>203.0.113.8 Fraud Risk</h1><p>risk_score: 10</p>" })
         { bool failed = false; try { IpLookup.ApplyScamalytics(new IpInfo { Ip = zero.Ip }, html); } catch (IOException) { failed = true; } Assert(failed, "reject wrong IP, invalid score or challenge page"); }
         foreach (var json in new[] { "{\"ip\":\"invalid\"}", "{\"error\":\"rate limited\"}" })
@@ -373,7 +419,7 @@ internal static class IpTests
             foreach (var path in new[] { "/scam-error/", "/scam-bad/" })
             {
                 var failed = await IpLookup.Query(route, CancellationToken.None, "http://ip-test.invalid/ip-good", "http://ip-test.invalid/ip-basic", "http://risk-test.invalid" + path);
-                Assert(failed.Ip == "203.0.113.9" && failed.Risk == null && failed.Proxy == null && failed.RiskProvider == "Scamalytics", "risk failure keeps IP and never substitutes IPQuery score");
+                Assert(failed.Ip == "203.0.113.9" && failed.Risk == null && failed.Proxy == null && failed.RiskProvider == "Scamalytics" && failed.NetworkType == "未知" && failed.ConnectionType == null && failed.ResidentialProxy == null, "risk failure keeps IP with unknown type and never substitutes IPQuery score");
             }
             using (var cancel = new CancellationTokenSource(200))
             {
@@ -384,7 +430,7 @@ internal static class IpTests
                 Assert(stopped && watch.Elapsed.TotalSeconds < 2 && server.ProxyRequests == before + 1, "cancellation interrupts body and skips fallback");
             }
         }
-        return "PASS Scamalytics score/flags, zero and missing values\r\nPASS reject wrong-IP, challenge and invalid-score pages\r\nPASS separate routes and same-route IP fallback plus Scamalytics lookup\r\nPASS system proxy routes both IP discovery and risk lookup (process-local proxy fixture)\r\nPASS risk failures keep IP with unknown risk; no IPQuery score substitution\r\nPASS IP cancellation with stalled response\r\n";
+        return "PASS Scamalytics score/flags, zero and missing values\r\nPASS IP classification: hosting, residential, inferred broadband, residential proxy, mobile and unknown; non-datacenter is not automatically residential\r\nPASS reject wrong-IP, challenge and invalid-score pages\r\nPASS separate routes and same-route IP fallback plus Scamalytics lookup\r\nPASS system proxy routes both IP discovery and risk lookup (process-local proxy fixture)\r\nPASS risk failures keep IP with unknown risk/type; no IPQuery score substitution\r\nPASS IP cancellation with stalled response\r\n";
     }
     internal static async Task<string> Live()
     {

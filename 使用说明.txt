@@ -1,4 +1,4 @@
-工具箱 3.3.0 · 网络服务 / 串口助手 / 网络调试 / ADB
+工具箱 3.3.1 · 网络服务 / 串口助手 / 网络调试 / ADB
 
 运行：先执行 build.cmd，再双击 bin/Toolbox.exe，无需安装。适用于已启用 .NET Framework 4.8 的 Windows 10/11。
 也可从 https://github.com/mazhujie/toolbox/releases/latest 下载完整便携 ZIP，整体解压后运行 Toolbox.exe。
@@ -60,12 +60,19 @@
    此页设置与下载测速页独立，不用跳页修改，也不会改动 Windows 系统代理设置。
 3. 左侧显示禁用 HTTP 代理的出口；右侧显示你选定的系统或手动代理出口。
    如果改为直连，本次只查询左侧。系统代理可能按 Windows 规则绕过部分地址。
-4. 可查看公网 IP、归属地、运营商、ASN，以及 Scamalytics 网页的风险分、风险等级、
-   机房、VPN、代理、Tor 和外部黑名单标签。风险分直接使用网页上的 Fraud Score，
+4. 直连、代理卡片分别显示 IP 类型，可查看公网 IP、归属地、运营商、ASN，以及 Scamalytics 网页的风险分、风险等级、
+   机房、住宅代理、VPN、代理、Tor 和外部黑名单标签。风险分直接使用网页上的 Fraud Score，
    范围 0–100，越高风险越高，不转换成“纯净百分比”。
 5. 可选中文字复制结果。修改代理设置后，右侧结果会清空，需重新查询。
 
 如何理解 IP 信息
+- 类型依据同一份 Scamalytics 报告：Datacenter = Yes 显示“机房 IP”；未标记机房且连接类型
+  明确为 residential 时显示“住宅 IP”。住宅代理标记为 Yes 且没有机房肯定标记时显示“住宅代理 IP”。
+- 未标记机房且接入类型为 cable / DSL / cable/DSL / fiber / FTTx 时显示“疑似住宅 IP”，
+  这是根据宽带接入方式推测，企业宽带也可能使用这些类型；详情保留原始连接类型和来源。
+- mobile / cellular 且未标记机房时显示“移动网络 IP”。只有“未标记机房”或字段不足时显示“未知”，
+  不会直接当成住宅。机房与住宅代理同时标记时优先显示机房，详情保留两项标记。
+- 类型与风险分独立，住宅 IP 不保证低风险。修改代理连接方式、重新查询或失败时清除过时的类型结果。
 - Scamalytics 的风险分和网页标签仅供参考。低分、0 分、未标记均不保证“绝对纯净”，
   也不代表其他网站一定允许访问；本工具不查询所有黑名单，不承诺风控或解锁结果。
 - 程序先从 IPQuery 取得出口 IP 和归属地，再查询 Scamalytics 对应 IP 的公开报告页。
@@ -283,10 +290,10 @@ bin/                 本机构建、测试报告和预览图（不提交到 Git�
 结果写入 lan-test.txt，不自动扫描整个局域网。
 
 打包与发布
-构建后在 Windows PowerShell 中执行 .\package.ps1 -Version 3.3.0，生成
-bin/Toolbox-3.3.0-portable.zip 和对应 .zip.sha256。ZIP 包含 EXE、说明以及完整官方 Platform Tools，
+构建后在 Windows PowerShell 中执行 .\package.ps1 -Version 3.3.1，生成
+bin/Toolbox-3.3.1-portable.zip 和对应 .zip.sha256。ZIP 包含 EXE、说明以及完整官方 Platform Tools，
 保留 SDK 的 DLL 和 NOTICE；下载地址、版本和 SHA256 固定，不包含测试文件、本机设置或 Npcap 驱动。
-推送 v3.3.0 形式的版本标签会触发 GitHub Actions：Windows 构建、核心测试、界面测试、打包、发布。
+推送 v3.3.1 形式的版本标签会触发 GitHub Actions：Windows 构建、核心测试、界面测试、打包、发布。
 Release 上传完整 ZIP 和校验文件，不只是单个 EXE。也可在 Actions 手动指定已存在的版本标签。
 已有 Release 不覆盖，修订时使用新版本标签；源码仓库不提交二进制和编译中间产物。
 

@@ -1,13 +1,13 @@
 # Toolbox
 
 Windows 网络工具箱、串口助手、TCP/UDP 调试助手与 ADB 工具，使用 C# / WinForms 和 .NET Framework 4.8。
-当前版本：3.3.0。[下载完整便携 ZIP](https://github.com/mazhujie/toolbox/releases/latest)，解压后运行 `Toolbox.exe`。
+当前版本：3.3.1。[下载完整便携 ZIP](https://github.com/mazhujie/toolbox/releases/latest)，解压后运行 `Toolbox.exe`。
 便携包包含官方 Android Platform Tools；实时抓包需单独安装 Npcap。
 
 ## 功能
 
 - 下载测速：国内/海外测速源，直连、Windows 系统代理和手动 HTTP 代理。
-- 出口 IP：并排查询直连与代理出口，默认系统代理；风险分仅取自 Scamalytics。
+- 出口 IP：并排查询直连与代理出口及机房/住宅类型，默认系统代理；风险分仅取自 Scamalytics。
 - 串口助手：参数设置、文本/HEX 收发、定时发送、接收日志及多条勾选发送。
 - 网络调试：局域网 Ping 扫描及延迟点阵、TCP/UDP 收发、实时抓包与 PCAP 保存。
 - ADB 工具：独立大类，包含 Shell 命令和文件传输两页，共用设备选择与 ADB 路径。
@@ -15,6 +15,21 @@ Windows 网络工具箱、串口助手、TCP/UDP 调试助手与 ADB 工具，�
 串口连接设置与收发位于同一页，高级参数可折叠。切换到网络页不会断开串口。
 “清空记录”同时重置日志、待显示的接收数据和 RX/TX 累计字节数；后续收发从零计数，连接与发送任务继续运行。
 网络操作按钮位于左侧，IP 查询的连接方式与下载测速独立。
+
+## 出口 IP 类型
+
+直连、代理两张卡片分别显示“IP 类型”，依据同一份 Scamalytics 报告，不增加查询服务：
+
+- **机房 IP**：报告明确标记 Datacenter = Yes；与住宅代理标记同时存在时优先显示机房，详情保留两项标记。
+- **住宅 IP**：连接类型明确为 residential 且未标记机房。
+- **疑似住宅 IP**：未标记机房，连接类型为 cable / DSL / cable/DSL / fiber / FTTx。这是根据接入方式的推测，企业宽带也可能使用这些类型。
+- **住宅代理 IP**：报告明确标记 Residential Proxy = Yes，且没有机房的肯定标记；该名称指住宅代理网络标记。
+- **移动网络 IP**：未标记机房且连接类型为 mobile / cellular；不归为固定住宅宽带。
+- **未知**：只有“未标记机房”、字段缺失、类型不认识或查询失败时，均不自动判为住宅。
+
+详情保留原始连接类型、住宅代理标记和来源。分类与风险分独立，住宅 IP 不代表低风险。
+字段依据 [Scamalytics 机房报告示例](https://scamalytics.com/ip/8.8.8.8) 和
+[宽带连接报告示例](https://scamalytics.com/ip/73.162.47.30)。
 
 ## ADB 工具
 
@@ -150,18 +165,18 @@ bin\Toolbox.exe
 构建后，在 Windows PowerShell 中运行：
 
 ```powershell
-.\package.ps1 -Version 3.3.0
+.\package.ps1 -Version 3.3.1
 ```
 
-生成 `bin/Toolbox-3.3.0-portable.zip` 和对应 `.zip.sha256` 校验文件。
+生成 `bin/Toolbox-3.3.1-portable.zip` 和对应 `.zip.sha256` 校验文件。
 ZIP 包含 EXE、README、使用说明及完整官方 Platform Tools（保留 DLL 和 NOTICE）。
 脚本固定官方 SDK 版本与 SHA256；不包含测试输出、抓包文件、用户设置或 Npcap 驱动。
 
 推送版本标签会触发 `.github/workflows/release.yml`：
 
 ```bash
-git tag v3.3.0
-git push origin v3.3.0
+git tag v3.3.1
+git push origin v3.3.1
 ```
 
 Action 在 Windows 上构建、运行核心与界面测试、打包，再将 **完整便携 ZIP 和 SHA256** 上传 GitHub Release。

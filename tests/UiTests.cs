@@ -111,6 +111,21 @@ internal static class ToolboxUiTests
         routeButton.Focus();
         Capture(form, "preview-ip.png");
         report.AppendLine("PASS IP system-proxy default, independent route menu, manual validation and stale-result reset");
+        var directCard = Field<IpCard>(ip, "direct"); var proxyCard = Field<IpCard>(ip, "proxied");
+        var home = new IpInfo { Ip = "203.0.113.8", Location = "模拟归属地", Isp = "模拟宽带运营商", Provider = "测试数据" };
+        var hosting = new IpInfo { Ip = "203.0.113.9", Location = "模拟归属地", Isp = "模拟机房运营商", Provider = "测试数据" };
+        IpLookup.ApplyScamalytics(home, IpTests.Page(home.Ip, 0, "cable", "No"));
+        IpLookup.ApplyScamalytics(hosting, IpTests.Page(hosting.Ip));
+        directCard.ShowInfo(home); proxyCard.ShowInfo(hosting);
+        Assert(Field<Label>(directCard, "networkType").Text == "IP 类型：疑似住宅 IP" && Field<Label>(proxyCard, "networkType").Text == "IP 类型：机房 IP", "both exit cards show separate network types");
+        Assert(Field<TextBox>(directCard, "details").Text.Contains("类型依据：Scamalytics") && Field<TextBox>(directCard, "details").Text.Contains("连接类型：cable"), "type source and raw connection value visible");
+        Capture(form, "preview-ip-types-demo.png");
+        routeMenu.Items[2].PerformClick();
+        Assert(Field<Label>(proxyCard, "networkType").Text == "IP 类型：未知", "route change clears stale IP type");
+        proxyCard.ShowInfo(new IpInfo { Ip = "203.0.113.10", Datacenter = false });
+        Assert(Field<Label>(proxyCard, "networkType").Text == "IP 类型：未知", "negative hosting flag alone remains unknown in UI");
+        directCard.Reset("点击查询"); routeMenu.Items[1].PerformClick();
+        report.AppendLine("PASS direct/proxy IP type labels, evidence, conservative unknown state and route-reset cleanup");
 
         typeof(SpeedForm).GetMethod("Busy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { true });
         Assert(!Field<Button>(form, "start").Enabled, "moved speed action busy state");
