@@ -3,7 +3,7 @@ using System.Windows.Forms;
 
 internal static class Program
 {
-    internal const string Version = "3.3.3";
+    internal const string Version = "3.3.4";
 
     [System.STAThread]
     static void Main()

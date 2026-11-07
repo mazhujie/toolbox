@@ -58,7 +58,7 @@ WSL 中通过 Windows interop 调用同一套脚本：
 本地打包示例：
 
 ```powershell
-.\scripts\package.ps1 -Version 3.3.3
+.\scripts\package.ps1 -Version 3.3.4
 ```
 
 完整 ZIP 包含正式 EXE、README、`docs/` 与固定版本的官方 Platform Tools，另附 SHA256。

@@ -1,7 +1,7 @@
 # Toolbox
 
 Windows 网络工具箱、串口助手、TCP/UDP 调试助手与 ADB 工具，使用 C# / WinForms 和 .NET Framework 4.8。
-当前版本：3.3.3。[下载完整便携 ZIP](https://github.com/mazhujie/toolbox/releases/latest)，解压后运行 `Toolbox.exe`。
+当前版本：3.3.4。[下载完整便携 ZIP](https://github.com/mazhujie/toolbox/releases/latest)，解压后运行 `Toolbox.exe`。
 便携包包含官方 Android Platform Tools；实时抓包需单独安装 Npcap。
 
 ## 功能
@@ -15,6 +15,8 @@ Windows 网络工具箱、串口助手、TCP/UDP 调试助手与 ADB 工具，�
 串口连接设置与收发位于同一页，高级参数可折叠。切换到网络页不会断开串口。
 “清空记录”同时重置日志、待显示的接收数据和 RX/TX 累计字节数；后续收发从零计数，连接与发送任务继续运行。
 网络操作按钮位于左侧，IP 查询的连接方式与下载测速独立。
+测速请求收到 HTTP 429 时明确显示“测速源限流”，提示稍后重试、降低并发连接数或切换测速源；
+详情标明本次已中断，日志保留状态码与原因。
 
 ## 出口 IP 类型
 
@@ -165,18 +167,18 @@ bin\Toolbox.exe
 构建后，在 Windows PowerShell 中运行：
 
 ```powershell
-.\scripts\package.ps1 -Version 3.3.3
+.\scripts\package.ps1 -Version 3.3.4
 ```
 
-生成 `bin/Toolbox-3.3.3-portable.zip` 和对应 `.zip.sha256` 校验文件。
+生成 `bin/Toolbox-3.3.4-portable.zip` 和对应 `.zip.sha256` 校验文件。
 ZIP 包含 EXE、README、使用说明及完整官方 Platform Tools（保留 DLL 和 NOTICE）。
 脚本固定官方 SDK 版本与 SHA256；不包含测试输出、抓包文件、用户设置或 Npcap 驱动。
 
 推送版本标签会触发 `.github/workflows/release.yml`：
 
 ```bash
-git tag v3.3.3
-git push origin v3.3.3
+git tag v3.3.4
+git push origin v3.3.4
 ```
 
 Action 在 Windows 上构建、运行核心与界面测试、打包，再将 **完整便携 ZIP 和 SHA256** 上传 GitHub Release。

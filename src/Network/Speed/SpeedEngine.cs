@@ -25,6 +25,11 @@ internal sealed class Result
     public bool Stopped;
     public double Mbps { get { return Bytes * 8.0 / Math.Max(Seconds, .001) / 1000000; } }
 }
+internal sealed class SpeedRateLimitException : IOException
+{
+    internal SpeedRateLimitException()
+        : base("测速源限流（HTTP 429）。请稍后重试，降低并发连接数，或切换测速源。") { }
+}
 internal static class Engine
 {
     public static HttpClient Client(Options o, CookieContainer cookies = null, bool redirects = true)
@@ -75,10 +80,10 @@ internal static class Engine
                     phase("正在准备中科大测速：建立会话并完成站点验证…");
                     // The homepage supplies the station's session cookie; PoW alone is insufficient.
                     using (var home = await client.GetAsync(origin, HttpCompletionOption.ResponseHeadersRead, limit.Token).ConfigureAwait(false))
-                    { home.EnsureSuccessStatusCode(); await SmallBody(home, limit.Token).ConfigureAwait(false); }
+                    { CheckStatus(home); await SmallBody(home, limit.Token).ConfigureAwait(false); }
                     var json = new JavaScriptSerializer(); Dictionary<string, object> puzzle;
                     using (var response = await client.GetAsync(new Uri(origin, "backend/pow.php?r=" + Guid.NewGuid().ToString("N")), HttpCompletionOption.ResponseHeadersRead, limit.Token).ConfigureAwait(false))
-                    { response.EnsureSuccessStatusCode(); puzzle = json.Deserialize<Dictionary<string, object>>(await SmallBody(response, limit.Token).ConfigureAwait(false)); }
+                    { CheckStatus(response); puzzle = json.Deserialize<Dictionary<string, object>>(await SmallBody(response, limit.Token).ConfigureAwait(false)); }
                     string challenge = Convert.ToString(puzzle["challenge"]), ticket = Convert.ToString(puzzle["token"]);
                     int difficulty = Convert.ToInt32(puzzle["difficulty"]);
                     if (difficulty < 1 || difficulty > 24 || challenge.Length > 256 || ticket.Length > 4096)
@@ -90,7 +95,7 @@ internal static class Engine
                         request.Content = new StringContent(json.Serialize(new { token = ticket, nonce = nonce }), Encoding.UTF8, "application/json");
                         using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, limit.Token).ConfigureAwait(false))
                         {
-                            response.EnsureSuccessStatusCode();
+                            CheckStatus(response);
                             var verification = json.Deserialize<Dictionary<string, object>>(await SmallBody(response, limit.Token).ConfigureAwait(false));
                             if (!verification.ContainsKey("success") || !Object.Equals(verification["success"], true))
                                 throw new IOException("中科大测速验证未通过，请稍后重试。");
@@ -114,7 +119,7 @@ internal static class Engine
                                 if ((int)response.StatusCode < 300 || (int)response.StatusCode >= 400) destination = null;
                                 if (destination == null)
                                 {
-                                    response.EnsureSuccessStatusCode();
+                                    CheckStatus(response);
                                     string body = await SmallBody(response, limit.Token).ConfigureAwait(false);
                                     IEnumerable<string> values; string refresh = null;
                                     if (response.Headers.TryGetValues("Refresh", out values)) refresh = values.FirstOrDefault();
@@ -170,9 +175,14 @@ internal static class Engine
         }
         throw new IOException("中科大测速计算验证未完成，请稍后重试。");
     }
+    static void CheckStatus(HttpResponseMessage response)
+    {
+        if ((int)response.StatusCode == 429) throw new SpeedRateLimitException();
+        response.EnsureSuccessStatusCode();
+    }
     static void Check(HttpResponseMessage r)
     {
-        r.EnsureSuccessStatusCode();
+        CheckStatus(r);
         var t = r.Content.Headers.ContentType;
         if (t != null && (t.MediaType == "text/html" || t.MediaType == "application/json"))
             throw new IOException("测速地址返回网页或 JSON，请换成直接下载文件的 URL。");

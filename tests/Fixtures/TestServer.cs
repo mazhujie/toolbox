@@ -10,7 +10,7 @@ using System.Threading.Tasks;
 internal sealed class TestServer : IDisposable
 {
     readonly TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
-    public int ProxyRequests, StallRequests;
+    public int ProxyRequests, StallRequests, LimitedRequests;
     public string Url;
     public TestServer()
     {
@@ -52,6 +52,16 @@ internal sealed class TestServer : IDisposable
                 stream.Write(head, 0, head.Length);
                 if (stall) { Thread.Sleep(4000); return; }
                 stream.Write(body, 0, body.Length); return;
+            }
+            if (request.Contains("/rate-limit"))
+            {
+                int count = Interlocked.Increment(ref LimitedRequests);
+                // Three latency probes and one full download succeed before the delayed limit.
+                if (!request.Contains("/rate-limit-after-data") || count > 4)
+                {
+                    byte[] limited = Encoding.ASCII.GetBytes("HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    stream.Write(limited, 0, limited.Length); return;
+                }
             }
             bool error = request.Contains("/error"), html = request.Contains("/html");
             byte[] h = Encoding.ASCII.GetBytes("HTTP/1.1 " + (error ? "503 Unavailable" : "200 OK") + "\r\nContent-Type: " + (html ? "text/html" : "application/octet-stream") + "\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n");

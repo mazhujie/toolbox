@@ -93,7 +93,18 @@ internal sealed class SpeedPage : UserControl
             history.Add(row); log.AppendText(row[0] + "  " + route + "  " + r.Mbps.ToString("F2") + " Mbps  " + row[10] + Environment.NewLine);
         }
         catch (OperationCanceledException) { if (!IsDisposed) { status.Text = "已取消。"; speed.Text = "— Mbps"; } }
-        catch (Exception ex) { if (!IsDisposed) { speed.Text = "测速失败"; status.Text = "请检查地址或代理，可切换测速源重试。"; log.AppendText(DateTime.Now.ToString("HH:mm:ss") + "  " + ex.GetBaseException().Message + Environment.NewLine); } }
+        catch (Exception ex)
+        {
+            if (!IsDisposed)
+            {
+                var error = ex.GetBaseException();
+                bool limited = error is SpeedRateLimitException;
+                speed.Text = limited ? "测速源限流" : "测速失败";
+                status.Text = limited ? error.Message : "请检查地址或代理，可切换测速源重试。";
+                if (limited) detail.Text = "本次测速已中断，未生成完整测速结果。";
+                log.AppendText(DateTime.Now.ToString("HH:mm:ss") + "  " + error.Message + Environment.NewLine);
+            }
+        }
         finally { var old = running; running = null; old.Dispose(); if (!IsDisposed) setBusy(false); }
     }
     void Export()

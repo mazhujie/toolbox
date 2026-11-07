@@ -61,6 +61,15 @@ internal static class SpeedTests
                 Assert(failed, path); report.AppendLine("PASS reject " + path);
             }
         }
+        foreach (string path in new[] { "/rate-limit", "/rate-limit-after-data" })
+        using (var server = new TestServer())
+        {
+            bool limited = false;
+            try { await Engine.Run(new Options { Url = server.Url.Replace("/data", path), Mode = 0, Seconds = 3, Connections = 1 }, CancellationToken.None, (b, t) => { }, s => { }); }
+            catch (Exception ex) { limited = ex.GetBaseException() is SpeedRateLimitException; }
+            Assert(limited && server.LimitedRequests == (path.EndsWith("after-data") ? 5 : 1), "429 identified during probe or after download without retrying");
+        }
+        report.AppendLine("PASS HTTP 429 classification in latency and download phases, including wrapped errors");
         return report.ToString();
     }
 }

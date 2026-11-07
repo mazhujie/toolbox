@@ -1,4 +1,4 @@
-工具箱 3.3.3 · 网络服务 / 串口助手 / 网络调试 / ADB
+工具箱 3.3.4 · 网络服务 / 串口助手 / 网络调试 / ADB
 
 运行：先执行 scripts/build.cmd，再双击 bin/Toolbox.exe，无需安装。适用于已启用 .NET Framework 4.8 的 Windows 10/11。
 也可从 https://github.com/mazhujie/toolbox/releases/latest 下载完整便携 ZIP，整体解压后运行 Toolbox.exe。
@@ -24,6 +24,8 @@
 3. 设置下载时长（3–60 秒）和并发连接数（1–8），点击开始测速。
 4. 可停止测试；下载阶段停止后显示已下载部分的平均值。取消延迟测量不产生记录。
 5. 点击导出 CSV，保存本次运行的测速记录。关闭程序后不保留历史。
+6. 遇到 HTTP 429 时显示“测速源限流”，提示“请稍后重试，降低并发连接数，或切换测速源”。
+   本次测速标记为已中断，不生成完整测速结果；日志保留 429 与中文说明。
 
 局域网扫描
 1. 从左侧进入“网络调试 → 局域网扫描”页，选择网卡。程序根据该网卡的 IPv4 地址和实际掩码带入网段，
@@ -286,10 +288,10 @@ bin/                 本机构建、测试报告和预览（不提交 Git）
 结果写入 lan-test.txt，不自动扫描整个局域网。
 
 打包与发布
-构建后在 Windows PowerShell 中执行 .\scripts\package.ps1 -Version 3.3.3，生成
-bin/Toolbox-3.3.3-portable.zip 和对应 .zip.sha256。ZIP 包含 EXE、说明以及完整官方 Platform Tools，
+构建后在 Windows PowerShell 中执行 .\scripts\package.ps1 -Version 3.3.4，生成
+bin/Toolbox-3.3.4-portable.zip 和对应 .zip.sha256。ZIP 包含 EXE、说明以及完整官方 Platform Tools，
 保留 SDK 的 DLL 和 NOTICE；下载地址、版本和 SHA256 固定，不包含测试文件、本机设置或 Npcap 驱动。
-推送 v3.3.3 形式的版本标签会触发 GitHub Actions：Windows 构建、核心测试、界面测试、打包、发布。
+推送 v3.3.4 形式的版本标签会触发 GitHub Actions：Windows 构建、核心测试、界面测试、打包、发布。
 Release 上传完整 ZIP 和校验文件，不只是单个 EXE。也可在 Actions 手动指定已存在的版本标签。
 已有 Release 不覆盖，修订时使用新版本标签；源码仓库不提交二进制和编译中间产物。
 
