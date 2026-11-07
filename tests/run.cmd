@@ -1,17 +1,33 @@
 @echo off
 setlocal
+set "TOOLBOX_SUITE=%~1"
+if "%TOOLBOX_SUITE%"=="" set "TOOLBOX_SUITE=all"
+if /i not "%TOOLBOX_SUITE%"=="all" if /i not "%TOOLBOX_SUITE%"=="core" if /i not "%TOOLBOX_SUITE%"=="ui" (
+    echo Usage: tests\run.cmd [all^|core^|ui]
+    exit /b 2
+)
 pushd "%~dp0.."
 if errorlevel 1 exit /b 1
 if not exist bin mkdir bin
-set "TOOLBOX_CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-if not exist "%TOOLBOX_CSC%" set "TOOLBOX_CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+set "TOOLBOX_TEST_SOURCES=/recurse:src\*.cs /recurse:tests\Core\*.cs tests\Fixtures\TestServer.cs tests\Fixtures\FakeSerialTransport.cs"
+if /i "%TOOLBOX_SUITE%"=="ui" goto ui
+call scripts\compile.cmd /target:exe /main:TestRunner /out:bin\CoreTests.exe %TOOLBOX_TEST_SOURCES% tests\TestRunner.cs
+if errorlevel 1 goto done
+bin\CoreTests.exe --self-test
+if errorlevel 1 goto done
+if /i "%TOOLBOX_SUITE%"=="core" goto done
+:ui
 if not exist bin\adb-fixture mkdir bin\adb-fixture
-"%TOOLBOX_CSC%" /nologo /utf8output /codepage:65001 /target:exe /out:bin\adb-fixture\adb.exe tests\FakeAdb.cs
-if errorlevel 1 (popd & exit /b 1)
-"%TOOLBOX_CSC%" /nologo /utf8output /codepage:65001 /target:winexe /main:ToolboxUiTests /out:bin\UiTests.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Net.Http.dll /reference:System.Web.Extensions.dll NetSpeed.cs IpInfo.cs LanScan.cs SerialAssistant.cs ToolShell.cs Communication.cs SocketSession.cs SocketPage.cs SocketTests.cs AdbClient.cs AdbWorkspace.cs AdbBrowser.cs PacketCapture.cs PacketDecoder.cs CapturePage.cs tests\UiTests.cs tests\AdbTests.cs tests\CaptureTests.cs
-if errorlevel 1 (popd & exit /b 1)
+call scripts\compile.cmd /target:exe /out:bin\adb-fixture\adb.exe tests\Fixtures\FakeAdb.cs
+if errorlevel 1 goto done
+call scripts\compile.cmd /target:winexe /main:ToolboxUiTests /out:bin\UiTests.exe %TOOLBOX_TEST_SOURCES% /recurse:tests\UI\*.cs
+if errorlevel 1 goto done
 start /wait "" bin\UiTests.exe
 set "TOOLBOX_TEST_RESULT=%ERRORLEVEL%"
-type bin\test-results\ui-test.txt
+if exist bin\test-results\ui-test.txt type bin\test-results\ui-test.txt
+goto finish
+:done
+set "TOOLBOX_TEST_RESULT=%ERRORLEVEL%"
+:finish
 popd
 exit /b %TOOLBOX_TEST_RESULT%

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 case "${1:-build}" in
-  build) script="build.cmd" ;;
+  build) script="scripts/build.cmd" ;;
   test) script="tests/run.cmd" ;;
   *) echo "Usage: $0 [build|test]" >&2; exit 2 ;;
 esac

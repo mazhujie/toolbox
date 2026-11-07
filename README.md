@@ -1,7 +1,7 @@
 # Toolbox
 
 Windows 网络工具箱、串口助手、TCP/UDP 调试助手与 ADB 工具，使用 C# / WinForms 和 .NET Framework 4.8。
-当前版本：3.3.2。[下载完整便携 ZIP](https://github.com/mazhujie/toolbox/releases/latest)，解压后运行 `Toolbox.exe`。
+当前版本：3.3.3。[下载完整便携 ZIP](https://github.com/mazhujie/toolbox/releases/latest)，解压后运行 `Toolbox.exe`。
 便携包包含官方 Android Platform Tools；实时抓包需单独安装 Npcap。
 
 ## 功能
@@ -147,14 +147,14 @@ TCP/UDP 收发页提供日志导出，不包含接收数据持续写入文件、
 Windows 下运行：
 
 ```bat
-build.cmd
+scripts\build.cmd
 bin\Toolbox.exe
 ```
 
 源码也可放在 WSL 的 `~/work/toolbox`，通过 Windows interop 构建：
 
 ```bash
-./build-wsl.sh
+./scripts/build-wsl.sh
 ```
 
 脚本使用 Windows 自带的 .NET Framework C# 编译器；无需安装 NuGet 包。
@@ -165,18 +165,18 @@ bin\Toolbox.exe
 构建后，在 Windows PowerShell 中运行：
 
 ```powershell
-.\package.ps1 -Version 3.3.2
+.\scripts\package.ps1 -Version 3.3.3
 ```
 
-生成 `bin/Toolbox-3.3.2-portable.zip` 和对应 `.zip.sha256` 校验文件。
+生成 `bin/Toolbox-3.3.3-portable.zip` 和对应 `.zip.sha256` 校验文件。
 ZIP 包含 EXE、README、使用说明及完整官方 Platform Tools（保留 DLL 和 NOTICE）。
 脚本固定官方 SDK 版本与 SHA256；不包含测试输出、抓包文件、用户设置或 Npcap 驱动。
 
 推送版本标签会触发 `.github/workflows/release.yml`：
 
 ```bash
-git tag v3.3.2
-git push origin v3.3.2
+git tag v3.3.3
+git push origin v3.3.3
 ```
 
 Action 在 Windows 上构建、运行核心与界面测试、打包，再将 **完整便携 ZIP 和 SHA256** 上传 GitHub Release。
@@ -187,16 +187,18 @@ Action 在 Windows 上构建、运行核心与界面测试、打包，再将 **�
 ## 验证
 
 ```bat
-bin\Toolbox.exe --self-test
 tests\run.cmd
+rem 可单独运行：tests\run.cmd core 或 tests\run.cmd ui
 ```
 
-WSL 下运行界面测试：
+WSL 下运行全部测试：
 
 ```bash
-./build-wsl.sh test
+./scripts/build-wsl.sh test
 ```
 
+测试单独编译为 `bin/CoreTests.exe` 与 `bin/UiTests.exe`，正式 `Toolbox.exe` 只编译 `src/`。
+原来的 `--self-test`、`--check-ip` 等开发验证参数改由 `CoreTests.exe` 执行，详见 [开发说明](https://github.com/mazhujie/toolbox/blob/main/docs/DEVELOPMENT.md)。
 核心测试覆盖下载、代理、IP 风险解析、LAN 扫描、串口编码与真实 TCP/UDP 回环通信。
 界面测试使用模拟串口和本机回环 Socket，覆盖连接/断开、参数设置、单条/多条发送、
 TCP 定向/群发、暂停显示、循环、取消和错误清理；不会打开真实 COM 端口。
@@ -211,28 +213,33 @@ ADB 测试使用单独编译的模拟设备程序，通过真实子进程验证�
 
 ## 代码结构
 
-| 文件 | 职责 |
-| --- | --- |
-| `NetSpeed.cs` | 程序入口、下载测速与主窗体 |
-| `ToolShell.cs` | 左侧导航和操作按钮 |
-| `IpInfo.cs` | 公网出口与 Scamalytics 查询 |
-| `LanScan.cs` | IPv4 Ping 扫描与点阵显示 |
-| `SerialAssistant.cs` | 串口通信、发送列表与界面 |
-| `Communication.cs` | 串口和网络调试共用的编码、收发记录与有界日志 |
-| `SocketSession.cs` | UDP / TCP 客户端 / TCP 服务端通信与连接生命周期 |
-| `SocketPage.cs` | 独立网络调试页面 |
-| `SocketTests.cs` | Windows 本机回环通信测试 |
-| `PacketCapture.cs` | Npcap 接口、捕获任务与 PCAP 文件 |
-| `PacketDecoder.cs` | 常见链路/IP 协议摘要和 HEX 预览 |
-| `CapturePage.cs` | 实时抓包、列表与保存设置 |
-| `AdbClient.cs` | ADB 定位、进程执行、设备解析和路径参数 |
-| `AdbWorkspace.cs` | ADB 共用设备设置、Shell 与文件传输页面 |
-| `AdbBrowser.cs` | 板端目录读取、文件类型解析和路径选择窗口 |
-| `tests/UiTests.cs` | 串口、Socket、ADB 和抓包界面集成测试 |
-| `tests/AdbTests.cs` / `tests/FakeAdb.cs` | ADB 子进程与隔离的模拟设备测试 |
-| `tests/CaptureTests.cs` | 模拟抓包来源、解析和 PCAP 测试 |
-| `package.ps1` | 完整便携 ZIP 和校验文件打包 |
-| `.github/workflows/release.yml` | Windows 构建、验证和 Release 发布 |
+```text
+src/
+  App/               程序入口、主窗口和左侧导航
+  Common/            公共编码、收发记录和日志缓存
+  Network/
+    Speed/           测速引擎与页面
+    Ip/              出口 IP 查询、类型判断与页面
+    Lan/             Ping 扫描与点阵页面
+    Sockets/         TCP / UDP 会话与页面
+    Capture/         抓包、协议摘要与页面
+  Serial/            串口会话与收发页面
+  Adb/               ADB 命令、文件浏览与页面
+tests/
+  Core/              核心功能测试
+  UI/                按功能拆分的界面集成测试
+  Fixtures/          模拟串口、ADB 和本地 HTTP 测试服务
+  TestRunner.cs      核心测试与开发诊断入口
+  run.cmd            全部 / 核心 / 界面测试入口
+scripts/             构建、共享编译参数、WSL 入口和便携打包
+docs/                使用说明和开发维护说明
+.github/workflows/   自动构建、测试与 Release 发布
+```
 
-详细用法见 [使用说明](使用说明.txt)。仓库仅包含源码、文档和构建脚本；
-二进制、编译中间产物、测试输出与本机设置已由 `.gitignore` 排除。
+`src/App/Program.cs` 统一维护版本号与启动设置，`MainForm.cs` 负责页面组装和退出清理。
+各功能的通信/查询逻辑与页面分开，测试和模拟设备全部放在 `tests/`，不参与正式构建。
+编译参数集中在 `scripts/compiler.rsp`；构建脚本自动收集对应目录的源码，新增文件无需修改长文件列表。
+缩进、编码和换行约定见 `.editorconfig` / `.gitattributes`。
+
+详细用法见 [使用说明](docs/使用说明.txt)，维护规则见 [开发说明](https://github.com/mazhujie/toolbox/blob/main/docs/DEVELOPMENT.md)。
+仓库仅包含源码、文档和脚本；二进制、编译中间产物、测试输出与本机设置由 `.gitignore` 排除。

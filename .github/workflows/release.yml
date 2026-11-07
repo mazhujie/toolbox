@@ -40,19 +40,18 @@ jobs:
           persist-credentials: false
       - name: Build
         run: |
-          cmd /c build.cmd
+          cmd /c scripts\build.cmd
           if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
       - name: Core self-tests
         run: |
-          $test = Start-Process -FilePath .\bin\Toolbox.exe -ArgumentList '--self-test' -PassThru -Wait
-          Get-Content .\bin\self-test.txt
-          if ($test.ExitCode -ne 0) { throw 'Core self-tests failed.' }
+          cmd /c tests\run.cmd core
+          if ($LASTEXITCODE -ne 0) { throw 'Core self-tests failed.' }
       - name: UI and capture tests
         run: |
-          cmd /c tests\run.cmd
+          cmd /c tests\run.cmd ui
           if ($LASTEXITCODE -ne 0) { throw 'UI tests failed.' }
       - name: Package EXE, Platform Tools and documentation
-        run: .\package.ps1 -Version $env:RELEASE_TAG.Substring(1)
+        run: .\scripts\package.ps1 -Version $env:RELEASE_TAG.Substring(1)
       - name: Publish portable ZIP and checksum
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,7 +66,7 @@ jobs:
           适用于 Windows 10/11，需启用 .NET Framework 4.8；无需另装 ADB。
 
           实时抓包需另行安装 [Npcap](https://npcap.com/#download)，压缩包不包含该驱动。
-          使用方法和功能范围见压缩包内的 README.md 和使用说明.txt。
+          使用方法和功能范围见压缩包内的 README.md 和 docs/使用说明.txt。
           附带 .sha256 校验文件；源码仓库不存放编译产物。
 
           发布前已运行核心自测及界面集成测试。串口、ADB 和抓包使用模拟设备/数据测试，

@@ -2,10 +2,10 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 
-$root = $PSScriptRoot
+$root = Split-Path -Parent $PSScriptRoot
 $bin = Join-Path $root 'bin'
 $exe = Join-Path $bin 'Toolbox.exe'
-if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Run build.cmd before packaging.' }
+if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Run scripts\build.cmd before packaging.' }
 
 # Pin the official SDK archive so local packages and CI releases contain the same ADB binaries.
 $sdkVersion = '37.0.1'
@@ -28,7 +28,7 @@ try {
     New-Item -ItemType Directory -Path $package -Force | Out-Null
     Copy-Item -LiteralPath $exe -Destination (Join-Path $package 'Toolbox.exe')
     Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $package
-    Copy-Item -LiteralPath (Join-Path $root '使用说明.txt') -Destination $package
+    Copy-Item -LiteralPath (Join-Path $root 'docs') -Destination $package -Recurse
     Expand-Archive -LiteralPath $sdkArchive -DestinationPath $package
     foreach ($file in @('adb.exe', 'AdbWinApi.dll', 'AdbWinUsbApi.dll', 'NOTICE.txt')) {
         if (-not (Test-Path -LiteralPath (Join-Path $package "platform-tools\$file"))) { throw "Missing SDK file: $file" }

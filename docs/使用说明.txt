@@ -1,6 +1,6 @@
-工具箱 3.3.2 · 网络服务 / 串口助手 / 网络调试 / ADB
+工具箱 3.3.3 · 网络服务 / 串口助手 / 网络调试 / ADB
 
-运行：先执行 build.cmd，再双击 bin/Toolbox.exe，无需安装。适用于已启用 .NET Framework 4.8 的 Windows 10/11。
+运行：先执行 scripts/build.cmd，再双击 bin/Toolbox.exe，无需安装。适用于已启用 .NET Framework 4.8 的 Windows 10/11。
 也可从 https://github.com/mazhujie/toolbox/releases/latest 下载完整便携 ZIP，整体解压后运行 Toolbox.exe。
 便携 ZIP 包含 Platform Tools，无需另装 ADB；实时抓包需要单独安装 Npcap。
 
@@ -243,61 +243,60 @@ ADB 工具
 官方工具：https://developer.android.com/tools/releases/platform-tools
 ADB 用法：https://developer.android.com/tools/adb
 
-文件
-README.md            项目说明、功能与构建方式
-NetSpeed.cs          下载测速、主窗体和网络测试
-IpInfo.cs            出口 IP 与 Scamalytics 风险查询
-LanScan.cs           局域网扫描与彩色点阵
-ToolShell.cs         四个大类、功能页和统一操作按钮
-Communication.cs     公共字节编码与日志缓存
-SocketSession.cs     TCP/UDP 通信与连接管理
-SocketPage.cs        网络调试页面
-SocketTests.cs       本机 TCP/UDP 回环测试
-PacketCapture.cs     Npcap 接口、抓包生命周期与 PCAP 保存
-PacketDecoder.cs     协议摘要与 HEX / ASCII 预览
-CapturePage.cs       实时抓包界面
-AdbClient.cs         ADB 程序定位、子进程和参数处理
-AdbWorkspace.cs      ADB 共用设置、Shell 与文件传输
-AdbBrowser.cs        板端目录读取、文件类型与路径选择
-SerialAssistant.cs   串口连接、单条/多条收发、编码与模拟测试
-build.cmd            Windows 构建脚本
-build-wsl.sh         在 WSL 调用 Windows 构建或界面测试
-tests/UiTests.cs      不参与正式构建的界面测试源码
-tests/AdbTests.cs     ADB 参数、文件传输与取消测试
-tests/FakeAdb.cs      隔离模拟设备，不接触真实 ADB 服务
-tests/CaptureTests.cs 模拟抓包来源、协议解析及 PCAP 测试
-tests/run.cmd        编译并运行界面测试
-package.ps1          便携 ZIP 与 SHA256 校验文件
-.github/workflows/release.yml  GitHub Actions 自动构建和发布
-bin/                 本机构建、测试报告和预览图（不提交到 Git）
+源码目录
+src/App/             程序入口、主窗口、统一左侧导航
+src/Common/          公共字节编码、收发记录与日志缓存
+src/Network/Speed/   测速引擎和下载测速页面
+src/Network/Ip/      出口 IP 查询、类型判断与页面
+src/Network/Lan/     局域网扫描与彩色点阵
+src/Network/Sockets/ TCP / UDP 通信与调试页面
+src/Network/Capture/ Npcap 抓包、协议摘要与页面
+src/Serial/          串口连接和收发页面
+src/Adb/             ADB 命令、Shell、传输与板端浏览
+tests/Core/          核心测试
+tests/UI/            按功能分组的界面集成测试
+tests/Fixtures/      模拟设备和本地 HTTP 测试服务
+tests/TestRunner.cs  开发验证入口，编译为 bin/CoreTests.exe
+tests/run.cmd        运行全部测试；core / ui 参数可分别运行核心或界面测试
+scripts/build.cmd    Windows 正式构建，只编译 src/ 下的 C# 源码
+scripts/build-wsl.sh WSL 中调用 Windows 编译器或测试
+scripts/compile.cmd 与 compiler.rsp  共享编译入口和参数
+scripts/package.ps1 完整便携 ZIP 与 SHA256 校验文件
+docs/                使用说明与开发维护说明
+.github/workflows/   自动构建、测试和 Release 发布
+bin/                 本机构建、测试报告和预览（不提交 Git）
 
 开发验证
-运行 Toolbox.exe --self-test，会启动临时本地 HTTP 服务器，验证直连、显式代理转发、
+先执行 tests/run.cmd core 编译核心测试；正式 Toolbox.exe 不再包含测试代码或开发验证参数。
+运行 bin/CoreTests.exe --self-test，会启动临时本地 HTTP 服务器，验证直连、显式代理转发、
 下载计时、取消、流停顿取消、错误状态和网页拒绝，结果写入程序旁的 self-test.txt。
 同时验证 IP 风险解析、系统/手动代理请求路由、局域网范围/并发/重试/取消，以及串口编码、分片接收、
 日志上限、发送串行化、TCP/UDP 回环、定向/群发、端口释放和异常清理。串口测试使用模拟对象，不打开真实 COM 端口。
 系统代理测试只临时修改测试进程的默认代理，结束后恢复，不修改 Windows 设置。
-运行 tests/run.cmd，验证本页连接方式切换、参数展开收起、单按钮连接/断开、
+运行 tests/run.cmd 可执行全部测试，tests/run.cmd ui 单独验证连接方式切换、参数展开收起、单按钮连接/断开、
 设置锁定、单条/多条模拟收发、循环顺序、取消、失败中断和退出释放，同时导出窗口预览。界面测试报告和预览位于 bin/test-results/。
 抓包测试使用模拟数据，覆盖协议解析与 10,000 组畸形输入、PCAP 格式、文件/时长上限、
 暂停、列表裁剪后文件完整性、异常清理和退出等待，不打开真实网卡。
-运行 Toolbox.exe --smoke-test，会打开并关闭界面，将界面预览写入程序旁的 preview.png。
-运行 Toolbox.exe --check-universities，会使用直连分别对两所大学进行两秒下载测试，
+运行 bin/CoreTests.exe --smoke-test，会打开并关闭界面，将界面预览写入程序旁的 preview.png。
+运行 bin/CoreTests.exe --check-universities，会使用直连分别对两所大学进行两秒下载测试，
 结果写入 university-test.txt。该命令会消耗实际网络流量。
-运行 Toolbox.exe --check-ip，会实际查询当前直连出口及对应的 Scamalytics 风险分，
+运行 bin/CoreTests.exe --check-ip，会实际查询当前直连出口及对应的 Scamalytics 风险分，
 验证结果写入 ip-test.txt，报告不记录具体公网 IP。
-运行 Toolbox.exe --check-lan，只对本机 127.0.0.1 进行原生 Ping 验证，
+运行 bin/CoreTests.exe --check-lan，只对本机 127.0.0.1 进行原生 Ping 验证，
 结果写入 lan-test.txt，不自动扫描整个局域网。
 
 打包与发布
-构建后在 Windows PowerShell 中执行 .\package.ps1 -Version 3.3.2，生成
-bin/Toolbox-3.3.2-portable.zip 和对应 .zip.sha256。ZIP 包含 EXE、说明以及完整官方 Platform Tools，
+构建后在 Windows PowerShell 中执行 .\scripts\package.ps1 -Version 3.3.3，生成
+bin/Toolbox-3.3.3-portable.zip 和对应 .zip.sha256。ZIP 包含 EXE、说明以及完整官方 Platform Tools，
 保留 SDK 的 DLL 和 NOTICE；下载地址、版本和 SHA256 固定，不包含测试文件、本机设置或 Npcap 驱动。
-推送 v3.3.2 形式的版本标签会触发 GitHub Actions：Windows 构建、核心测试、界面测试、打包、发布。
+推送 v3.3.3 形式的版本标签会触发 GitHub Actions：Windows 构建、核心测试、界面测试、打包、发布。
 Release 上传完整 ZIP 和校验文件，不只是单个 EXE。也可在 Actions 手动指定已存在的版本标签。
 已有 Release 不覆盖，修订时使用新版本标签；源码仓库不提交二进制和编译中间产物。
 
 代码组织
+程序入口、主窗口与测速页面已拆分；各功能的通信/查询与页面按职责组织。
+测试和模拟设备全部位于 tests/，正式 EXE 只包含 src/。版本号统一在 src/App/Program.cs 维护。
+详细维护规则见 docs/DEVELOPMENT.md。
 保持现有 WinForms / .NET Framework 4.8 单 EXE 结构；抓包调用系统安装的 Npcap，ADB 调用官方工具。
 导航统一管理功能页与操作按钮；串口布局、事件绑定、通信和字节编码各有明确职责。
 直接复用原有网络功能，避免为这版新增通用插件框架或重复封装。

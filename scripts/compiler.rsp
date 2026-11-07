@@ -1,0 +1,7 @@
+/nologo
+/utf8output
+/codepage:65001
+/reference:System.Windows.Forms.dll
+/reference:System.Drawing.dll
+/reference:System.Net.Http.dll
+/reference:System.Web.Extensions.dll
