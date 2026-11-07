@@ -29,7 +29,7 @@ internal sealed class ToolShell : UserControl
         body.Dock = DockStyle.Fill; body.BackColor = Color.FromArgb(245, 247, 251);
         Controls.Add(body); Controls.Add(side);
         side.Controls.Add(new Label { Text = "工具箱", Font = new Font(Font.FontFamily, 22, FontStyle.Bold), ForeColor = Color.White, Location = new Point(20, 22), Size = new Size(170, 40) });
-        side.Controls.Add(new Label { Text = "DESKTOP UTILITIES      3.3.1", Font = new Font("Segoe UI", 8), ForeColor = Color.FromArgb(148, 164, 189), Location = new Point(22, 67), Size = new Size(182, 20) });
+        side.Controls.Add(new Label { Text = "DESKTOP UTILITIES      3.3.2", Font = new Font("Segoe UI", 8), ForeColor = Color.FromArgb(148, 164, 189), Location = new Point(22, 67), Size = new Size(182, 20) });
         MainButton(network, "网络服务", 106); MainButton(serial, "串口助手", 144); MainButton(debug, "网络调试", 182); MainButton(adb, "ADB 工具", 220);
         network.Click += delegate { ShowCategory("network"); }; serial.Click += delegate { ShowCategory("serial"); };
         debug.Click += delegate { ShowCategory("debug"); };

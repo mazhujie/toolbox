@@ -546,7 +546,7 @@ internal static class ToolboxUiTests
             choices.SelectedIndex = 1;
             outgoing.Text = "服务端定向发送";
             send.PerformClick();
-            await Until(() => a.Any(r => r.Kind == "RX"), "TCP targeted UI send");
+            await Until(() => a.Any(r => r.Kind == "RX") && send.Enabled, "TCP targeted UI send completes and unlocks controls");
             Assert(!b.Any(r => r.Kind == "RX"), "TCP UI target excludes second client");
             choices.SelectedIndex = 0;
             outgoing.Text = "本机 TCP 服务端：发送给全部客户端";

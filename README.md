@@ -1,7 +1,7 @@
 # Toolbox
 
 Windows 网络工具箱、串口助手、TCP/UDP 调试助手与 ADB 工具，使用 C# / WinForms 和 .NET Framework 4.8。
-当前版本：3.3.1。[下载完整便携 ZIP](https://github.com/mazhujie/toolbox/releases/latest)，解压后运行 `Toolbox.exe`。
+当前版本：3.3.2。[下载完整便携 ZIP](https://github.com/mazhujie/toolbox/releases/latest)，解压后运行 `Toolbox.exe`。
 便携包包含官方 Android Platform Tools；实时抓包需单独安装 Npcap。
 
 ## 功能
@@ -165,18 +165,18 @@ bin\Toolbox.exe
 构建后，在 Windows PowerShell 中运行：
 
 ```powershell
-.\package.ps1 -Version 3.3.1
+.\package.ps1 -Version 3.3.2
 ```
 
-生成 `bin/Toolbox-3.3.1-portable.zip` 和对应 `.zip.sha256` 校验文件。
+生成 `bin/Toolbox-3.3.2-portable.zip` 和对应 `.zip.sha256` 校验文件。
 ZIP 包含 EXE、README、使用说明及完整官方 Platform Tools（保留 DLL 和 NOTICE）。
 脚本固定官方 SDK 版本与 SHA256；不包含测试输出、抓包文件、用户设置或 Npcap 驱动。
 
 推送版本标签会触发 `.github/workflows/release.yml`：
 
 ```bash
-git tag v3.3.1
-git push origin v3.3.1
+git tag v3.3.2
+git push origin v3.3.2
 ```
 
 Action 在 Windows 上构建、运行核心与界面测试、打包，再将 **完整便携 ZIP 和 SHA256** 上传 GitHub Release。
