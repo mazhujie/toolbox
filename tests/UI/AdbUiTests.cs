@@ -57,6 +57,7 @@ internal static partial class ToolboxUiTests
         Capture(form, "preview-adb-shell-demo.png");
         input.Text = "fixture-error"; await adb.Execute();
         Assert(notice.Text.Contains("退出码 7") && outputBox.Text.Contains("Permission denied"), "stderr and failed exit are not marked successful");
+        Assert(adb.Projects.Data.Runs[0].ExitCode == 7 && adb.Projects.Data.Runs[0].Status == "失败" && adb.Projects.Data.Runs[0].Target.Contains("DEMO-USB") && adb.Projects.ReadRun(adb.Projects.Data.Runs[0]).Contains("Permission denied"), "ADB failure and full output persist with target device");
         input.Text = "fixture-hang"; Field<Button>(adb, "execute").PerformClick();
         await Until(() => outputBox.Text.Contains("READY"), "long running ADB command");
         int pid = Int32.Parse(File.ReadAllText(Path.Combine(root, "pid.txt")));
@@ -64,6 +65,7 @@ internal static partial class ToolboxUiTests
         Field<Button>(adb, "stop").PerformClick();
         await Until(() => !adb.Busy, "stop hidden Shell from transfer page");
         Assert(ProcessExited(pid) && header.Devices.Enabled, "cancel releases client and unlocks selection");
+        Assert(adb.Projects.Data.Runs[0].Status == "已停止", "cancelled ADB run persisted");
         report.AppendLine("PASS ADB streaming Shell, command history, nonzero exit, navigation and cross-page cancellation");
 
         string source = Path.Combine(root, "local & 中文", "a & 中文.bin");

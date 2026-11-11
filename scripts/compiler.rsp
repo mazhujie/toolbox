@@ -1,6 +1,8 @@
 /nologo
 /utf8output
 /codepage:65001
+/win32icon:assets\toolbox.ico
+/resource:assets\toolbox.ico,Toolbox.AppIcon
 /reference:System.Windows.Forms.dll
 /reference:System.Drawing.dll
 /reference:System.Net.Http.dll
