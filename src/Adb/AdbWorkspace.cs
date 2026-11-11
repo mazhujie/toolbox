@@ -55,6 +55,12 @@ internal sealed class AdbWorkspace : IDisposable
     AdbBrowser browser;
     bool changing, shuttingDown, disposed, stopped;
     string executable, networkAddress = "";
+    internal ProjectStore Projects;
+    readonly Label projectLabel = new Label { Location = new Point(340, 32), Size = new Size(428, 28), TextAlign = ContentAlignment.MiddleRight, AutoEllipsis = true };
+    RunRecording activeRecording;
+    int? recordedExit;
+    internal void SetProjectName(string name) { projectLabel.Text = "记录归档到项目：" + name; }
+    internal void PrepareCommand(string text) { if (!Busy) command.Text = text; }
     internal bool Busy { get { return running != null || browser != null; } }
     internal Button[] ShellActions { get { return new[] { execute, stop, terminal, refresh, clearShell, saveShell }; } }
     internal Button[] FileActions { get { return new[] { push, pull, stop, refresh, openFolder, clearFiles }; } }
@@ -65,6 +71,7 @@ internal sealed class AdbWorkspace : IDisposable
         rememberPath = remember;
         executable = initialExecutable ?? AdbLocator.Find();
         Page(ShellPage, "ADB Shell", shellHeader, shellProgress, shellNotice);
+        ShellPage.Controls.Add(projectLabel); projectLabel.BringToFront();
         Page(FilesPage, "ADB 文件传输", filesHeader, fileProgress, fileNotice);
         Label(ShellPage, "设备 Shell 命令", 24, 250);
         Label(ShellPage, "历史", 296, 250);
@@ -201,7 +208,7 @@ internal sealed class AdbWorkspace : IDisposable
         shellNotice.Text = fileNotice.Text = text;
     }
 
-    async Task Perform(string name, AdbText log, Func<string, CancellationToken, Task> action, int timeout = 0)
+    async Task Perform(string name, AdbText log, Func<string, CancellationToken, Task> action, int timeout = 0, Func<RunRecording> beginRecording = null)
     {
         if (Busy || shuttingDown) return;
         var cancel = new CancellationTokenSource(); running = cancel; stopped = false;
@@ -209,28 +216,45 @@ internal sealed class AdbWorkspace : IDisposable
         if (timeout > 0) cancel.CancelAfter(timeout);
         UpdateControls(); Notice(name + "…");
         log.Append("\r\n[" + DateTime.Now.ToString("HH:mm:ss") + "] " + name + (selected == null ? "" : " · " + selected.Serial) + "\r\n");
+        string outcome = "失败"; recordedExit = null;
         try
         {
             string path = AdbLocator.Validate(executable);
+            if (beginRecording != null) activeRecording = beginRecording();
             await action(path, cancel.Token);
+            outcome = "成功";
             Notice(name + "完成。"); log.Append("\r\n[完成]\r\n");
         }
         catch (OperationCanceledException)
         {
+            outcome = "已停止";
             string message = stopped || shuttingDown ? "已停止本次 ADB 客户端；设备端命令可能仍在运行，传输可能留下部分文件。" : "ADB 操作超时，请检查连接后刷新设备。";
             log.Append("\r\n[停止] " + message + "\r\n"); Notice(message);
         }
-        catch (Exception ex) { log.Append("\r\n[错误] " + ex.Message + "\r\n"); Notice(ex.Message); }
+        catch (Exception ex) { log.Append("\r\n[错误] " + ex.Message + "\r\n"); if (activeRecording != null) activeRecording.Append("\r\n[错误] " + ex.Message, true); Notice(ex.Message); }
         finally
         {
+            if (activeRecording != null)
+            {
+                try { activeRecording.Finish(outcome, recordedExit); }
+                catch (Exception ex) { log.Append("\r\n[记录保存失败] " + ex.Message); Notice("记录保存失败：" + ex.Message); }
+                activeRecording = null;
+            }
             running = null; cancel.Dispose();
             if (!shuttingDown) { Flush(); UpdateControls(); }
             finished.TrySetResult(true);
         }
     }
 
-    Task<AdbResult> Run(string path, string[] args, CancellationToken token, AdbText log)
-    { return AdbClient.Run(path, args, token, (text, error) => log.Append(error ? "[stderr] " + text : text)); }
+    async Task<AdbResult> Run(string path, string[] args, CancellationToken token, AdbText log)
+    {
+        var result = await AdbClient.Run(path, args, token, (text, error) => {
+            log.Append(error ? "[stderr] " + text : text);
+            if (activeRecording != null) activeRecording.Append(text, error);
+        });
+        if (activeRecording != null) recordedExit = result.ExitCode;
+        return result;
+    }
 
     internal Task RefreshDevices()
     {
@@ -288,9 +312,11 @@ internal sealed class AdbWorkspace : IDisposable
         if (Busy || shuttingDown) return;
         string[] args;
         string text = command.Text;
+        string target = "";
         try
         {
             var device = RequireDevice();
+            target = "ADB · " + device.Serial + " · transport " + device.Transport;
             if (String.IsNullOrWhiteSpace(text)) throw new ArgumentException("请输入设备 Shell 命令。");
             args = device.Target.Concat(new[] { "shell", "-T", "-n", text.Replace("\r\n", "\n") }).ToArray();
             AdbClient.Arguments(args);
@@ -298,7 +324,9 @@ internal sealed class AdbWorkspace : IDisposable
         catch (Exception ex) { Notice(ex.Message); return; }
         history.Items.Remove(text); history.Items.Insert(0, text); if (history.Items.Count > 30) history.Items.RemoveAt(30); history.SelectedIndex = 0;
         shellLog.Append("\r\n$ " + text + "\r\n");
-        await Perform("执行 Shell", shellLog, async (path, token) => { (await Run(path, args, token, shellLog)).EnsureSuccess(); });
+        var project = Projects == null ? null : Projects.Current;
+        await Perform("执行 Shell", shellLog, async (path, token) => { (await Run(path, args, token, shellLog)).EnsureSuccess(); }, 0,
+            project == null ? (Func<RunRecording>)null : () => Projects.Begin(project.Id, text, target, project.Directory));
     }
 
     internal async Task Transfer(bool pushing)

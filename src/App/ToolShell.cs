@@ -14,7 +14,7 @@ internal sealed class ToolShell : UserControl
 {
     readonly Panel side = new Panel(), body = new Panel();
     readonly FlowLayoutPanel pages = new FlowLayoutPanel(), actions = new FlowLayoutPanel();
-    readonly Button network = new Button(), serial = new Button(), debug = new Button(), adb = new Button();
+    readonly Button network = new Button(), serial = new Button(), debug = new Button(), adb = new Button(), projects = new Button();
     readonly Label actionTitle = new Label();
     readonly Dictionary<string, ToolView> views = new Dictionary<string, ToolView>();
     readonly Dictionary<string, string> last = new Dictionary<string, string>();
@@ -30,12 +30,13 @@ internal sealed class ToolShell : UserControl
         Controls.Add(body); Controls.Add(side);
         side.Controls.Add(new Label { Text = "工具箱", Font = new Font(Font.FontFamily, 22, FontStyle.Bold), ForeColor = Color.White, Location = new Point(20, 22), Size = new Size(170, 40) });
         side.Controls.Add(new Label { Text = "DESKTOP UTILITIES      " + Program.Version, Font = new Font("Segoe UI", 8), ForeColor = Color.FromArgb(148, 164, 189), Location = new Point(22, 67), Size = new Size(182, 20) });
-        MainButton(network, "网络服务", 106); MainButton(serial, "串口助手", 144); MainButton(debug, "网络调试", 182); MainButton(adb, "ADB 工具", 220);
+        MainButton(network, "网络服务", 106); MainButton(serial, "串口助手", 144); MainButton(debug, "网络调试", 182); MainButton(adb, "ADB 工具", 220); MainButton(projects, "项目助手", 258);
+        projects.Click += delegate { ShowCategory("projects"); };
         network.Click += delegate { ShowCategory("network"); }; serial.Click += delegate { ShowCategory("serial"); };
         debug.Click += delegate { ShowCategory("debug"); };
         adb.Click += delegate { ShowCategory("adb"); };
-        side.Controls.Add(new Label { Text = "功能页面", ForeColor = Color.FromArgb(148, 164, 189), Location = new Point(22, 276), Size = new Size(166, 24) });
-        pages.SetBounds(16, 304, 182, 150); pages.FlowDirection = FlowDirection.TopDown; pages.WrapContents = false; side.Controls.Add(pages);
+        side.Controls.Add(new Label { Text = "功能页面", ForeColor = Color.FromArgb(148, 164, 189), Location = new Point(22, 314), Size = new Size(166, 24) });
+        pages.SetBounds(16, 342, 182, 150); pages.FlowDirection = FlowDirection.TopDown; pages.WrapContents = false; side.Controls.Add(pages);
         actionTitle.Text = "当前操作"; actionTitle.ForeColor = Color.FromArgb(148, 164, 189); actionTitle.SetBounds(22, 414, 166, 24); side.Controls.Add(actionTitle);
         actions.SetBounds(16, 444, 184, 296);
         actions.FlowDirection = FlowDirection.TopDown; actions.WrapContents = false; actions.AutoScroll = true; side.Controls.Add(actions);
@@ -97,6 +98,7 @@ internal sealed class ToolShell : UserControl
         serial.BackColor = category == "serial" ? Blue : Nav;
         debug.BackColor = category == "debug" ? Blue : Nav;
         adb.BackColor = category == "adb" ? Blue : Nav;
+        projects.BackColor = category == "projects" ? Blue : Nav;
         foreach (var item in pageButtons)
             item.Value.BackColor = item.Key == id ? Color.FromArgb(44, 61, 87) : Nav;
         foreach (var item in views.Values) item.Content.Visible = item.Id == id;
@@ -110,6 +112,7 @@ internal sealed class ToolShell : UserControl
             StyleAction(button);
         }
         actionTitle.Text = view.Title + " · 操作";
+        actionTitle.Visible = view.Actions.Length > 0;
         LayoutActions();
     }
 

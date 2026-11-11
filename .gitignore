@@ -24,3 +24,7 @@ preview*.png
 .env
 .env.*
 !.env.example
+
+# Python migration tools
+__pycache__/
+*.py[cod]

@@ -72,6 +72,7 @@ internal static partial class ToolboxUiTests
         await ExerciseNetworkPages(form, shell);
         await ExerciseSockets(form, shell);
         await ExerciseCapture(form, shell);
+        await ExerciseProjects(form, shell);
         await ExerciseAdb(form, shell);
         await ExerciseSerial(form, shell, session, current, applied);
     }
@@ -95,13 +96,13 @@ internal static partial class ToolboxUiTests
             return new[] { new CaptureAdapter { Name = "fake", Description = "模拟网卡 · TEST DATA" } };
         }, options => packetSource = new FakePacketSource(), Path.Combine(output, "capture-ui-" + Guid.NewGuid().ToString("N")));
         bool passed = false;
-        using (var form = new MainForm(session, adb, capture))
+        using (var form = new MainForm(session, adb, capture, new ProjectStore(Path.Combine(Path.GetTempPath(), "toolbox-ui-projects-" + Guid.NewGuid().ToString("N")))))
         {
             var sockets = Field<SocketSession>(Field<SocketPage>(form, "socketPage"), "session");
             form.Shown += async delegate
             {
                 try { await Exercise(form, session, () => fake, () => parameters); passed = true; }
-                catch (Exception ex) { report.AppendLine(ex.ToString()); }
+                catch (Exception ex) { report.AppendLine(ex.ToString()); File.WriteAllText(Path.Combine(output, "ui-test.txt"), report.ToString(), Encoding.UTF8); }
                 form.Close();
             };
             Application.Run(form);

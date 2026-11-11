@@ -1,7 +1,7 @@
 # Toolbox
 
-Windows 网络工具箱、串口助手、TCP/UDP 调试助手与 ADB 工具，使用 C# / WinForms 和 .NET Framework 4.8。
-当前版本：3.3.4。[下载完整便携 ZIP](https://github.com/mazhujie/toolbox/releases/latest)，解压后运行 `Toolbox.exe`。
+Windows 网络工具箱、串口助手、TCP/UDP 调试助手、ADB 工具与项目助手，使用 C# / WinForms 和 .NET Framework 4.8。
+源码版本：3.4.0。[下载已发布的完整便携 ZIP](https://github.com/mazhujie/toolbox/releases/latest)，解压后运行 `Toolbox.exe`。
 便携包包含官方 Android Platform Tools；实时抓包需单独安装 Npcap。
 
 ## 功能
@@ -11,12 +11,40 @@ Windows 网络工具箱、串口助手、TCP/UDP 调试助手与 ADB 工具，�
 - 串口助手：参数设置、文本/HEX 收发、定时发送、接收日志及多条勾选发送。
 - 网络调试：局域网 Ping 扫描及延迟点阵、TCP/UDP 收发、实时抓包与 PCAP 保存。
 - ADB 工具：独立大类，包含 Shell 命令和文件传输两页，共用设备选择与 ADB 路径。
+- 项目助手：项目启动、现场便签、常用命令、调试历史、收工断点，以及支持截图粘贴的调试日志。
 
 串口连接设置与收发位于同一页，高级参数可折叠。切换到网络页不会断开串口。
 “清空记录”同时重置日志、待显示的接收数据和 RX/TX 累计字节数；后续收发从零计数，连接与发送任务继续运行。
 网络操作按钮位于左侧，IP 查询的连接方式与下载测速独立。
 测速请求收到 HTTP 429 时明确显示“测速源限流”，提示稍后重试、降低并发连接数或切换测速源；
 详情标明本次已中断，日志保留状态码与原因。
+
+## 项目助手与调试日志
+
+这是 Windows 原生窗口。项目记录不需要 Python 或 WSL；选择 WSL 命令模式时使用本机安装的发行版。先在“项目设置”中选择目录，可选编辑器 EXE、WSL / PowerShell 终端和常用网址。
+“启动项目”打开这些资源；恢复上次项目、页面和窗口大小时不会自动运行脚本。
+
+- **现场**：记录已完成、当前卡点和下一步；“保存收工断点”生成独立快照，恢复时先保留当前现场。
+- **命令**：默认 ADB Shell，直接填写 `pwd`、`dmesg` 等板端命令。执行时进入已有 ADB 页，复用设备选择并包装为 `adb -t … shell -T -n …`（无 transport ID 时用 `-s`）。首次先刷新并选择设备。
+  Linux 脚本选择 **WSL**，“环境设置 → 读取配置”会列出已安装的发行版；项目的 `\\wsl.localhost\发行版\…` / `\\wsl$\发行版\…` 路径可自动带出发行版和 Linux 目录。
+  每个项目记住发行版、工作目录和终端类型。使用发行版配置的默认用户，以 Bash 登录环境运行，读取 `.bash_profile` 或 `.profile`；交互式 `.bashrc` / 别名可能不生效，可显式 `source` 环境脚本或使用独立终端。
+  目录不存在就报错，支持中文输出、停止、退出码和常用命令；Windows 脚本也可显式选择 Windows PowerShell。
+- **历史**：ADB Shell、WSL 与工作台 PowerShell 命令自动记录开始/结束、设备或发行版、工作目录、命令、状态和完整输出。切换项目不会改变正在执行的命令归属。
+  预览保留末尾约 256 KB；“完整输出”打开原始日志。“记为问题日志”带入该次命令与输出摘要。
+- **日志**：新建一篇日志，填写标题及现象、过程、结论。在正文中按 **Ctrl+V**、右键粘贴，或点击“粘贴截图”；也可从文件添加图片。
+  图片以 PNG 独立保存，点击缩略图看原图，右键移除关联。按标题/正文搜索，文字停顿约 1.2 秒、切换项目或退出时保存；也可点“保存”。
+  正文为纯文本，截图作为日志附件，不做富文本排版。
+
+数据位于 `%LOCALAPPDATA%\Toolbox\workspace`，备份时复制整个目录（含 `workspace.json`、`runs` 和 `images`）。
+元数据原子替换并保留上一版 `.bak`，文件损坏时停止加载并保留原文件；同一账户一次只允许一个窗口写入。
+仅 ADB 内置 Shell 和工作台 WSL / PowerShell 命令自动进入项目历史；串口、TCP/UDP、抓包和独立终端继续使用各自的日志，可把截图和排查结论写入项目日志。
+
+WSL 使用 `wsl.exe` 直接启动，需要发行版中有 Bash、`setsid`、`/bin/kill`（Ubuntu 默认提供）。停止或关闭窗口会结束本次命令的进程组，不关闭发行版及其他 WSL 会话。
+内置命令面向非交互任务，同一进程组的后台子任务也会随本次命令结束；自行脱离进程组的守护进程需手动管理，交互操作请用项目启动的独立终端。
+发行版枚举与选择参考 [Microsoft WSL 命令说明](https://learn.microsoft.com/en-us/windows/wsl/basic-commands)。
+
+原“续作”的一次性迁移脚本为 `scripts/migrate-pausepoint.py`（在原 WSL 环境运行）。它只创建新的目标目录，保留旧 SQLite 备份、项目、便签、断点和调试输出，拒绝覆盖已有工作台。
+旧版命令保留原文并标注需检查环境，编辑器请重新选择 Windows EXE。迁移完成后 Toolbox 本身仍为独立 Windows 程序。
 
 ## 出口 IP 类型
 
@@ -50,7 +78,7 @@ Windows 网络工具箱、串口助手、TCP/UDP 调试助手与 ADB 工具，�
   “使用当前目录”可选择空目录；选择只填入路径，点击传输按钮后才开始收发。
 - 两页共用一个内置任务，切页继续运行，退出时停止并等待本工具启动的 ADB 客户端结束。
   不执行 `kill-server`；停止客户端不保证设备端进程结束，独立交互终端需自行退出。
-- 输出仅保留最近约 256K 字符，命令历史与设备列表仅存在当前窗口内，不自动写盘。
+- 窗口输出仅保留最近约 256K 字符，最近命令下拉列表与设备列表存在当前窗口内；Shell 完整输出与执行结果自动保存到当前项目的调试历史。
   ADB 路径在成功刷新后保存到 `%LOCALAPPDATA%\Toolbox\adb-path.txt`。
 
 板端浏览使用所选设备的普通 Shell 权限，只读取一层目录，适用于提供兼容 POSIX Shell 的 Android/Linux 板卡。
@@ -167,18 +195,18 @@ bin\Toolbox.exe
 构建后，在 Windows PowerShell 中运行：
 
 ```powershell
-.\scripts\package.ps1 -Version 3.3.4
+.\scripts\package.ps1 -Version 3.4.0
 ```
 
-生成 `bin/Toolbox-3.3.4-portable.zip` 和对应 `.zip.sha256` 校验文件。
+生成 `bin/Toolbox-3.4.0-portable.zip` 和对应 `.zip.sha256` 校验文件。
 ZIP 包含 EXE、README、使用说明及完整官方 Platform Tools（保留 DLL 和 NOTICE）。
 脚本固定官方 SDK 版本与 SHA256；不包含测试输出、抓包文件、用户设置或 Npcap 驱动。
 
 推送版本标签会触发 `.github/workflows/release.yml`：
 
 ```bash
-git tag v3.3.4
-git push origin v3.3.4
+git tag v3.4.0
+git push origin v3.4.0
 ```
 
 Action 在 Windows 上构建、运行核心与界面测试、打包，再将 **完整便携 ZIP 和 SHA256** 上传 GitHub Release。

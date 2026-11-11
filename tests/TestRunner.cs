@@ -21,6 +21,7 @@ internal static class TestRunner
             case "--check-universities": filename = "university-test.txt"; break;
             case "--check-ip": filename = "ip-test.txt"; break;
             case "--check-lan": filename = "lan-test.txt"; break;
+            case "--check-wsl": filename = "wsl-test.txt"; break;
             case "--smoke-test": return SmokeTest();
             default: Console.Error.WriteLine("Unknown test command: " + command); return 1;
         }
@@ -29,7 +30,7 @@ internal static class TestRunner
         {
             report = (command == "--check-universities" ? SpeedTests.CheckUniversities()
                 : command == "--check-ip" ? IpTests.Live()
-                : command == "--check-lan" ? LanTests.Live() : Run()).GetAwaiter().GetResult();
+                : command == "--check-lan" ? LanTests.Live() : command == "--check-wsl" ? WslTests.Live() : Run()).GetAwaiter().GetResult();
         }
         catch (Exception ex) { report = "FAIL " + ex; }
         File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, filename), report, Encoding.UTF8);
@@ -44,6 +45,8 @@ internal static class TestRunner
         report.Append(await LanTests.Run());
         report.Append(await SerialTests.Run());
         report.Append(await SocketTests.Run());
+        report.Append(await ProjectTests.Run());
+        report.Append(WslTests.Unit());
         return report.ToString();
     }
 
