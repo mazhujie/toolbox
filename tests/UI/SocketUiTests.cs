@@ -34,8 +34,8 @@ internal static partial class ToolboxUiTests
             Assert(!protocol.Enabled && !Field<ComboBox>(page, "localAddress").Enabled, "socket connection settings locked");
             outgoing.Text = "本机 UDP 回环测试：你好";
             var packet = remote.ReceiveAsync();
-            send.PerformClick();
-            await Until(() => packet.IsCompleted, "UDP UI sends real datagram");
+            PressSendShortcut(outgoing);
+            await Until(() => packet.IsCompleted, "UDP shortcut sends a real datagram");
             Assert(Encoding.UTF8.GetString(packet.Result.Buffer) == outgoing.Text, "UDP page text bytes");
             await remote.SendAsync(packet.Result.Buffer, packet.Result.Buffer.Length, session.LocalEndpoint);
             await Until(() => incoming.Text.Contains("RX") && incoming.Text.Contains("回环测试"), "UDP echo visible");
@@ -56,8 +56,13 @@ internal static partial class ToolboxUiTests
             await Until(() => Field<long>(page, "received") == before + bytes.Length, "paused display still counts receive");
             await Task.Delay(150);
             Assert(incoming.Text == shown, "pause only freezes display");
+            var follow = Field<CheckBox>(page, "autoscroll");
+            follow.Checked = false;
+            incoming.Select(2, 3);
             pause.Checked = false;
             Assert(incoming.Text.Contains("暂停后恢复显示"), "resume shows retained records");
+            Assert(incoming.SelectionStart == 2 && incoming.SelectionLength == 3, "automatic scrolling off preserves selection");
+            follow.Checked = true;
             Field<Button>(page, "clear").PerformClick();
             Assert(incoming.TextLength == 0 && Field<long>(page, "received") == 0 && Field<long>(page, "transmitted") == 0, "network clear resets logs and counts");
 

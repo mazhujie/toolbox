@@ -6,140 +6,149 @@ using System.Windows.Forms;
 
 internal sealed class ToolView
 {
-    public string Id, Category, Title;
-    public Control Content;
-    public Button[] Actions;
+    internal string Id, Category, Title;
+    internal Control Content;
 }
+
 internal sealed class ToolShell : UserControl
 {
-    readonly Panel side = new Panel(), body = new Panel();
-    readonly FlowLayoutPanel pages = new FlowLayoutPanel(), actions = new FlowLayoutPanel();
-    readonly Button network = new Button(), serial = new Button(), debug = new Button(), adb = new Button(), projects = new Button();
-    readonly Label actionTitle = new Label();
+    readonly Panel side = new Panel(), body = new Panel(), content = new Panel();
+    readonly FlowLayoutPanel pages = new FlowLayoutPanel();
+    readonly Button network = new Button(), serial = new Button(), debug = new Button(), adb = new Button();
+    readonly TableLayoutPanel mutexBanner;
+    readonly Label mutexMessage = UiTheme.Label("");
     readonly Dictionary<string, ToolView> views = new Dictionary<string, ToolView>();
+    readonly List<ToolView> orderedViews = new List<ToolView>();
     readonly Dictionary<string, string> last = new Dictionary<string, string>();
     readonly Dictionary<string, Button> pageButtons = new Dictionary<string, Button>();
-    string category, current;
-    static readonly Color Nav = Color.FromArgb(24, 35, 55), Blue = Color.FromArgb(49, 102, 215);
+    string category, current, busyView;
+    static readonly Color Nav = Color.FromArgb(24, 35, 55);
+    static readonly Color BlueHighlight = Color.FromArgb(224, 235, 255);
+
     internal ToolShell()
     {
-        Size = new Size(1026, 800);
-        Dock = DockStyle.Fill; Font = new Font("Microsoft YaHei UI", 10);
-        side.Dock = DockStyle.Left; side.Width = 210; side.BackColor = Nav;
-        body.Dock = DockStyle.Fill; body.BackColor = Color.FromArgb(245, 247, 251);
-        Controls.Add(body); Controls.Add(side);
-        side.Controls.Add(new Label { Text = "工具箱", Font = new Font(Font.FontFamily, 22, FontStyle.Bold), ForeColor = Color.White, Location = new Point(20, 22), Size = new Size(170, 40) });
-        side.Controls.Add(new Label { Text = "DESKTOP UTILITIES      " + Program.Version, Font = new Font("Segoe UI", 8), ForeColor = Color.FromArgb(148, 164, 189), Location = new Point(22, 67), Size = new Size(182, 20) });
-        MainButton(network, "网络服务", 106); MainButton(serial, "串口助手", 144); MainButton(debug, "网络调试", 182); MainButton(adb, "ADB 工具", 220); MainButton(projects, "项目助手", 258);
-        projects.Click += delegate { ShowCategory("projects"); };
-        network.Click += delegate { ShowCategory("network"); }; serial.Click += delegate { ShowCategory("serial"); };
-        debug.Click += delegate { ShowCategory("debug"); };
-        adb.Click += delegate { ShowCategory("adb"); };
-        side.Controls.Add(new Label { Text = "功能页面", ForeColor = Color.FromArgb(148, 164, 189), Location = new Point(22, 314), Size = new Size(166, 24) });
-        pages.SetBounds(16, 342, 182, 150); pages.FlowDirection = FlowDirection.TopDown; pages.WrapContents = false; side.Controls.Add(pages);
-        actionTitle.Text = "当前操作"; actionTitle.ForeColor = Color.FromArgb(148, 164, 189); actionTitle.SetBounds(22, 414, 166, 24); side.Controls.Add(actionTitle);
-        actions.SetBounds(16, 444, 184, 296);
-        actions.FlowDirection = FlowDirection.TopDown; actions.WrapContents = false; actions.AutoScroll = true; side.Controls.Add(actions);
-        side.SizeChanged += delegate { LayoutActions(); };
+        Dock = DockStyle.Fill;
+        Font = UiTheme.Body;
+        side.Dock = DockStyle.Left;
+        side.TabIndex = 0;
+        body.TabIndex = 1;
+        side.Width = 196;
+        side.BackColor = Nav;
+        Controls.Add(body);
+        Controls.Add(side);
+
+        var brand = new Label { Text = "工具箱", Font = UiTheme.Title, ForeColor = Color.White, Location = new Point(18, 19), AutoSize = true };
+        var version = new Label { Text = "v" + Program.Version, Font = UiTheme.Small, ForeColor = Color.FromArgb(170, 186, 211), Location = new Point(20, 62), AutoSize = true };
+        side.Controls.Add(brand);
+        side.Controls.Add(version);
+        MainButton(network, "网络服务", "network", 100);
+        MainButton(serial, "串口助手", "serial", 146);
+        MainButton(debug, "网络调试", "debug", 192);
+        MainButton(adb, "ADB 工具", "adb", 238);
+
+        var workspace = UiTheme.Stack();
+        workspace.BackColor = UiTheme.Background;
+        body.Dock = DockStyle.Fill;
+        body.Controls.Add(workspace);
+        pages.Height = 46;
+        pages.Margin = Padding.Empty;
+        pages.Padding = new Padding(16, 5, 16, 5);
+        pages.BackColor = Color.White;
+        pages.WrapContents = false;
+        pages.TabStop = false;
+        UiTheme.Add(workspace, pages);
+        UiTheme.Add(workspace, new Panel { Height = 1, BackColor = UiTheme.Border, Margin = Padding.Empty });
+
+        var jump = UiTheme.Button(new Button(), "前往查看");
+        jump.Click += delegate { if (busyView != null) ShowView(busyView); };
+        mutexMessage.ForeColor = Color.FromArgb(106, 66, 16);
+        mutexBanner = UiTheme.Row(mutexMessage, mutexMessage, jump);
+        mutexBanner.BackColor = Color.FromArgb(255, 242, 212);
+        mutexBanner.Padding = new Padding(16, 1, 16, 1);
+        UiTheme.Add(workspace, mutexBanner);
+        mutexBanner.Visible = false;
+
+        content.Margin = Padding.Empty;
+        UiTheme.Add(workspace, content, true);
     }
-    void MainButton(Button button, string text, int y)
+
+    void MainButton(Button button, string title, string group, int top)
     {
-        button.Text = text; button.SetBounds(16, y, 178, 36); button.FlatStyle = FlatStyle.Flat; button.FlatAppearance.BorderSize = 0;
-        button.Font = new Font(Font.FontFamily, 12, FontStyle.Bold); button.TextAlign = ContentAlignment.MiddleLeft; button.Padding = new Padding(12, 0, 0, 0);
-        button.BackColor = Nav; button.ForeColor = Color.White; side.Controls.Add(button);
+        button.Text = title;
+        button.SetBounds(12, top, 172, 40);
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(43, 60, 87);
+        button.Font = UiTheme.Section;
+        button.ForeColor = Color.White;
+        button.BackColor = Nav;
+        button.Padding = new Padding(10, 0, 0, 0);
+        button.TextAlign = ContentAlignment.MiddleLeft;
+        button.Click += delegate { if (last.ContainsKey(group)) ShowView(last[group]); };
+        side.Controls.Add(button);
     }
-    internal void Add(string id, string group, string title, Control content, params Button[] buttons)
+
+    internal void Add(string id, string group, string title, Control page)
     {
-        var view = new ToolView { Id = id, Category = group, Title = title, Content = content, Actions = buttons };
+        var view = new ToolView { Id = id, Category = group, Title = title, Content = page };
         views.Add(id, view);
-        content.Dock = DockStyle.Fill;
-        content.Visible = false;
-        body.Controls.Add(content);
-        foreach (var button in buttons)
-        {
-            if (button.Parent != null) button.Parent.Controls.Remove(button);
-            button.EnabledChanged -= ActionEnabledChanged;
-            button.EnabledChanged += ActionEnabledChanged;
-        }
+        orderedViews.Add(view);
+        page.Dock = DockStyle.Fill;
+        page.Visible = false;
+        content.Controls.Add(page);
         if (!last.ContainsKey(group)) last[group] = id;
-    }
-    void ShowCategory(string name)
-    {
-        if (last.ContainsKey(name)) ShowView(last[name]);
     }
 
     internal void ShowView(string id)
     {
-        if (!views.ContainsKey(id)) return;
-        var view = views[id];
+        ToolView view;
+        if (id == null || !views.TryGetValue(id, out view)) return;
         if (category != view.Category)
         {
             category = view.Category;
-            foreach (Control item in pages.Controls.Cast<Control>().ToArray())
-            {
-                pages.Controls.Remove(item);
-                item.Dispose();
-            }
+            pages.SuspendLayout();
+            foreach (Control old in pages.Controls.Cast<Control>().ToArray()) old.Dispose();
             pageButtons.Clear();
-            foreach (var item in views.Values.Where(v => v.Category == category))
+            foreach (var item in orderedViews.Where(item => item.Category == category))
             {
                 string key = item.Id;
-                var button = new Button { Text = "  " + item.Title, Width = 176, Height = 39, Margin = new Padding(0, 0, 0, 5), FlatStyle = FlatStyle.Flat,
-                    ForeColor = Color.FromArgb(211, 221, 238), BackColor = Nav, TextAlign = ContentAlignment.MiddleLeft };
-                button.FlatAppearance.BorderSize = 0;
+                var button = UiTheme.Button(new Button(), item.Title);
                 button.Click += delegate { ShowView(key); };
                 pages.Controls.Add(button);
-                pageButtons[key] = button;
+                pageButtons.Add(key, button);
             }
+            pages.ResumeLayout();
         }
         current = id;
         last[category] = id;
-        network.BackColor = category == "network" ? Blue : Nav;
-        serial.BackColor = category == "serial" ? Blue : Nav;
-        debug.BackColor = category == "debug" ? Blue : Nav;
-        adb.BackColor = category == "adb" ? Blue : Nav;
-        projects.BackColor = category == "projects" ? Blue : Nav;
+        network.BackColor = category == "network" ? UiTheme.Blue : Nav;
+        serial.BackColor = category == "serial" ? UiTheme.Blue : Nav;
+        debug.BackColor = category == "debug" ? UiTheme.Blue : Nav;
+        adb.BackColor = category == "adb" ? UiTheme.Blue : Nav;
         foreach (var item in pageButtons)
-            item.Value.BackColor = item.Key == id ? Color.FromArgb(44, 61, 87) : Nav;
-        foreach (var item in views.Values) item.Content.Visible = item.Id == id;
+        {
+            bool selected = item.Key == id;
+            item.Value.BackColor = selected ? BlueHighlight : Color.White;
+            item.Value.ForeColor = selected ? UiTheme.Blue : UiTheme.Ink;
+            item.Value.FlatAppearance.BorderColor = selected ? BlueHighlight : Color.White;
+        }
+        foreach (var item in orderedViews) item.Content.Visible = item.Id == id;
         view.Content.BringToFront();
-        actions.Controls.Clear();
-        foreach (var button in view.Actions)
-        {
-            button.Width = 174; button.Height = 35; button.Margin = new Padding(0, 0, 0, 6); button.Padding = Padding.Empty;
-            button.FlatStyle = FlatStyle.Flat; button.FlatAppearance.BorderSize = 0; button.ForeColor = Color.White;
-            actions.Controls.Add(button);
-            StyleAction(button);
-        }
-        actionTitle.Text = view.Title + " · 操作";
-        actionTitle.Visible = view.Actions.Length > 0;
-        LayoutActions();
+        UpdateBanner();
     }
 
-    void LayoutActions()
+    internal void ShowNetworkBusy(string owner)
     {
-        pages.Height = pageButtons.Count * 44;
-        actionTitle.Top = pages.Bottom + 16;
-        actions.Top = actionTitle.Bottom + 8;
-        actions.Height = Math.Max(0, side.ClientSize.Height - actions.Top - 24);
+        busyView = owner;
+        UpdateBanner();
     }
 
-    void StyleAction(Button button)
+    void UpdateBanner()
     {
-        if (button.Parent != actions) return;
-        button.BackColor = !button.Enabled
-            ? Color.FromArgb(174, 187, 205)
-            : actions.Controls.GetChildIndex(button) == 0 ? Blue : Color.FromArgb(44, 61, 87);
+        bool show = busyView != null && current != busyView && (current == "speed" || current == "ip" || current == "lan");
+        if (show) mutexMessage.Text = views[busyView].Title + "正在运行，本页暂时无法启动。";
+        mutexBanner.Visible = show;
     }
 
-    void ActionEnabledChanged(object sender, EventArgs e) { StyleAction((Button)sender); }
     internal string CurrentView { get { return current; } }
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            foreach (var button in views.Values.SelectMany(v => v.Actions).Distinct()) button.Dispose();
-        }
-        base.Dispose(disposing);
-    }
 }

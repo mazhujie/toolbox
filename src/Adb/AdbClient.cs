@@ -84,7 +84,7 @@ internal static class AdbClient
     }
 
     // Invoke the executable directly: local paths and remote shell commands must never pass through cmd.exe.
-    internal static Task<AdbResult> Run(string executable, string[] args, CancellationToken token, Action<string, bool> output, bool killTree = false, Action<ProcessStartInfo> configure = null, bool keepInputOpen = false)
+    internal static Task<AdbResult> Run(string executable, string[] args, CancellationToken token, Action<string, bool> output)
     {
         string arguments = Arguments(args);
         return Task.Run(async () =>
@@ -99,11 +99,10 @@ internal static class AdbClient
                     StandardOutputEncoding = new UTF8Encoding(false), StandardErrorEncoding = new UTF8Encoding(false),
                     WorkingDirectory = Path.GetDirectoryName(executable)
                 };
-                if (configure != null) configure(process.StartInfo);
                 process.Start();
-                using (token.Register(() => { if (keepInputOpen) CloseInput(process); else Kill(process, killTree); }))
+                using (token.Register(() => Kill(process)))
                 {
-                    if (!keepInputOpen) process.StandardInput.Close();
+                    process.StandardInput.Close();
                     var readers = Task.WhenAll(Read(process.StandardOutput, stdout, false, output), Read(process.StandardError, stderr, true, output));
                     process.WaitForExit();
                     await readers.ConfigureAwait(false);
@@ -111,19 +110,6 @@ internal static class AdbClient
                     return new AdbResult { ExitCode = process.ExitCode, Output = stdout.Read(false), Error = stderr.Read(false), Truncated = stdout.Trimmed || stderr.Trimmed };
                 }
             }
-        });
-    }
-
-    static void CloseInput(Process process)
-    {
-        try { process.StandardInput.Close(); }
-        catch (IOException) { }
-        catch (InvalidOperationException) { }
-        // WSL's supervisor receives EOF and stops only this command's Linux process group.
-        Task.Run(() => {
-            try { if (!process.WaitForExit(5000)) Kill(process, false); }
-            catch (InvalidOperationException) { }
-            catch (System.ComponentModel.Win32Exception) { }
         });
     }
 
@@ -139,15 +125,10 @@ internal static class AdbClient
         }
     }
 
-    static void Kill(Process process, bool tree)
+    static void Kill(Process process)
     {
         try
         {
-            if (process.HasExited) return;
-            if (tree)
-            {
-                using (var killer = Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "taskkill.exe"), "/PID " + process.Id + " /T /F") { UseShellExecute = false, CreateNoWindow = true })) killer.WaitForExit();
-            }
             if (!process.HasExited) process.Kill();
         }
         catch (InvalidOperationException) { }

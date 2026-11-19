@@ -61,7 +61,7 @@ internal static partial class ToolboxUiTests
         shell.ShowView("serial");
         outgoing.Text = "界面演示：模拟串口回环，不代表真实设备数据。";
         Field<ComboBox>(workspace, "newline").SelectedItem = "CRLF";
-        Field<Button>(workspace, "send").PerformClick();
+        PressSendShortcut(outgoing);
         await Until(() => incoming.Text.Contains("RX") && incoming.Text.Contains("界面演示"), "text send/receive");
         Assert(current().Writes == 1, "one manual transmission");
         Assert(incoming.Text.Contains("TX") && !incoming.Text.Contains("�"), "UTF-8 receive display");

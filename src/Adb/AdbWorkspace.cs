@@ -19,17 +19,21 @@ internal sealed class AdbHeader : UserControl
 
     internal AdbHeader()
     {
-        SetBounds(24, 78, 744, 160);
-        Label("ADB 程序", 0, 4); Executable.SetBounds(96, 0, 552, 28); Controls.Add(Executable);
-        Browse.Text = "选择…"; Browse.SetBounds(656, 0, 88, 28); Controls.Add(Browse);
-        Label("设备", 0, 46); Devices.SetBounds(96, 40, 648, 30); Devices.DropDownStyle = ComboBoxStyle.DropDownList; Controls.Add(Devices);
-        Label("网络地址", 0, 86); Address.SetBounds(96, 80, 370, 28); Controls.Add(Address);
-        Connect.Text = "连接设备"; Connect.SetBounds(478, 80, 126, 30); Controls.Add(Connect);
-        Disconnect.Text = "断开网络设备"; Disconnect.SetBounds(612, 80, 132, 30); Controls.Add(Disconnect);
-        State.SetBounds(0, 120, 566, 38); State.ForeColor = Color.DimGray; Controls.Add(State);
-        Download.Text = "下载官方 Platform Tools"; Download.SetBounds(566, 122, 178, 30); Controls.Add(Download);
+        AutoSize = true;
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        var layout = UiTheme.Card(true);
+        layout.Margin = Padding.Empty;
+        Controls.Add(layout);
+        Devices.DropDownStyle = ComboBoxStyle.DropDownList;
+        UiTheme.Add(layout, UiTheme.Row(Executable, UiTheme.Label("ADB 程序"), Executable, UiTheme.Button(Browse, "选择…")));
+        UiTheme.Add(layout, UiTheme.Row(Devices, UiTheme.Label("设备"), Devices));
+        UiTheme.Add(layout, UiTheme.Row(Address, UiTheme.Label("网络地址"), Address,
+            UiTheme.Button(Connect, "连接设备"), UiTheme.Button(Disconnect, "断开网络设备")));
+        UiTheme.Status(State);
+        Download.Text = "下载官方 Platform Tools"; Download.AutoSize = true;
+        UiTheme.Add(layout, UiTheme.Row(State, State, Download));
     }
-    void Label(string text, int x, int y) { Controls.Add(new Label { Text = text, AutoSize = true, Location = new Point(x, y) }); }
+
 }
 
 internal sealed class AdbWorkspace : IDisposable
@@ -40,6 +44,7 @@ internal sealed class AdbWorkspace : IDisposable
     readonly TextBox pushLocal = new TextBox(), pushRemote = new TextBox(), pullRemote = new TextBox(), pullLocal = new TextBox();
     readonly ComboBox history = new ComboBox();
     readonly Button execute = new Button(), stop = new Button(), terminal = new Button(), refresh = new Button(), clearShell = new Button(), saveShell = new Button();
+    readonly Button fileStop = new Button(), fileRefresh = new Button();
     readonly Button push = new Button(), pull = new Button(), clearFiles = new Button(), openFolder = new Button();
     readonly Button pickFile = new Button(), pickDirectory = new Button(), pickDestination = new Button();
     readonly Button browsePush = new Button(), browsePull = new Button();
@@ -55,72 +60,96 @@ internal sealed class AdbWorkspace : IDisposable
     AdbBrowser browser;
     bool changing, shuttingDown, disposed, stopped;
     string executable, networkAddress = "";
-    internal ProjectStore Projects;
-    readonly Label projectLabel = new Label { Location = new Point(340, 32), Size = new Size(428, 28), TextAlign = ContentAlignment.MiddleRight, AutoEllipsis = true };
-    RunRecording activeRecording;
-    int? recordedExit;
-    internal void SetProjectName(string name) { projectLabel.Text = "记录归档到项目：" + name; }
-    internal void PrepareCommand(string text) { if (!Busy) command.Text = text; }
     internal bool Busy { get { return running != null || browser != null; } }
-    internal Button[] ShellActions { get { return new[] { execute, stop, terminal, refresh, clearShell, saveShell }; } }
-    internal Button[] FileActions { get { return new[] { push, pull, stop, refresh, openFolder, clearFiles }; } }
     IEnumerable<AdbHeader> Headers { get { return new[] { shellHeader, filesHeader }; } }
 
     internal AdbWorkspace(string initialExecutable = null, bool remember = true)
     {
         rememberPath = remember;
         executable = initialExecutable ?? AdbLocator.Find();
-        Page(ShellPage, "ADB Shell", shellHeader, shellProgress, shellNotice);
-        ShellPage.Controls.Add(projectLabel); projectLabel.BringToFront();
-        Page(FilesPage, "ADB 文件传输", filesHeader, fileProgress, fileNotice);
-        Label(ShellPage, "设备 Shell 命令", 24, 250);
-        Label(ShellPage, "历史", 296, 250);
-        history.SetBounds(348, 244, 420, 30); history.DropDownStyle = ComboBoxStyle.DropDownList; ShellPage.Controls.Add(history);
-        history.FormattingEnabled = true;
-        history.Format += delegate(object sender, ListControlConvertEventArgs e) { e.Value = e.ListItem.ToString().Replace("\r\n", " ↵ ").Replace("\n", " ↵ "); };
-        Text(ShellPage, command, 24, 284, 744, 80, true);
-        command.MaxLength = 12000; command.AcceptsReturn = true; command.Text = "pwd\r\nls -la";
-        Label(ShellPage, "Ctrl+Enter 执行；每次为独立 shell。top / vi 请使用左侧“交互终端”。", 24, 374);
-        Text(ShellPage, shellOutput, 24, 408, 744, 256, true); shellOutput.ReadOnly = true; shellOutput.BackColor = Color.White;
-        shellNotice.Text = "先刷新并选择设备，再执行命令。切换页面不停止当前任务。";
-
-        Label(FilesPage, "推送到设备  ·  push", 24, 248);
-        Label(FilesPage, "本地来源", 24, 288); Text(FilesPage, pushLocal, 120, 282, 444, 28, false);
-        Button(FilesPage, pickFile, "选文件", 576, 282, 90); Button(FilesPage, pickDirectory, "选目录", 678, 282, 90);
-        Label(FilesPage, "设备目标", 24, 330); Text(FilesPage, pushRemote, 120, 324, 546, 28, false); pushRemote.Text = "/sdcard/Download/";
-        Button(FilesPage, browsePush, "浏览…", 678, 324, 90);
-        Label(FilesPage, "拉取到电脑  ·  pull", 24, 376);
-        Label(FilesPage, "设备来源", 24, 416); Text(FilesPage, pullRemote, 120, 410, 546, 28, false);
-        Button(FilesPage, browsePull, "浏览…", 678, 410, 90);
-        Label(FilesPage, "保存目录", 24, 458); Text(FilesPage, pullLocal, 120, 452, 546, 28, false);
-        Button(FilesPage, pickDestination, "选目录", 678, 452, 90);
-        string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-        pullLocal.Text = Directory.Exists(downloads) ? downloads : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        Label(FilesPage, "支持文件和目录；同名目标按 ADB 规则覆盖。取消传输可能留下部分文件。", 24, 494);
-        Text(FilesPage, fileOutput, 24, 528, 744, 136, true); fileOutput.ReadOnly = true; fileOutput.BackColor = Color.White;
-        fileNotice.Text = "点击“浏览…”选择板端文件或目录；本地来源也可拖入文件或目录。";
-        execute.Text = "执行命令"; stop.Text = "停止当前任务"; terminal.Text = "打开交互终端";
-        refresh.Text = "刷新设备"; clearShell.Text = "清空 Shell 输出"; saveShell.Text = "保存 Shell 输出";
-        push.Text = "推送到设备"; pull.Text = "拉取到电脑"; clearFiles.Text = "清空传输日志"; openFolder.Text = "打开保存目录";
+        BuildShell();
+        BuildFiles();
         BindEvents(); SyncHeaders(); UpdateControls(); display.Start();
     }
 
-    static void Page(UserControl page, string title, AdbHeader header, ProgressBar progress, Label notice)
+    void BuildShell()
     {
-        page.BackColor = Color.FromArgb(245, 247, 251); page.Font = new Font("Microsoft YaHei UI", 10); page.AutoScroll = true;
-        page.Controls.Add(new Label { Text = title, Font = new Font(page.Font.FontFamily, 21, FontStyle.Bold), Location = new Point(24, 20), Size = new Size(740, 44) });
-        page.Controls.Add(header); progress.SetBounds(24, 682, 744, 6); progress.Style = ProgressBarStyle.Marquee; progress.Visible = false; page.Controls.Add(progress);
-        notice.SetBounds(24, 700, 744, 48); notice.ForeColor = Color.DimGray; page.Controls.Add(notice);
+        var layout = UiTheme.Page(ShellPage);
+        UiTheme.Heading(layout, "ADB Shell", UiTheme.Button(execute, "执行命令", true),
+            UiTheme.Button(stop, "停止任务", warning: true), UiTheme.Button(terminal, "交互终端"), UiTheme.Button(refresh, "刷新设备"));
+        UiTheme.Add(layout, shellHeader);
+        var edit = UiTheme.Stack();
+        history.DropDownStyle = ComboBoxStyle.DropDownList;
+        history.FormattingEnabled = true;
+        history.Format += delegate(object sender, ListControlConvertEventArgs e) { e.Value = e.ListItem.ToString().Replace("\r\n", " ↵ ").Replace("\n", " ↵ "); };
+        UiTheme.Add(edit, UiTheme.Row(history, UiTheme.Label("命令历史"), history));
+        FormatOutput(command, false);
+        command.MaxLength = 12000; command.AcceptsReturn = true; command.Text = "pwd\r\nls -la";
+        UiTheme.Add(edit, command, true);
+
+        var output = UiTheme.Stack();
+        var outputLabel = UiTheme.Label("Shell 输出 · Ctrl+Enter 执行命令");
+        UiTheme.Add(output, UiTheme.Row(outputLabel, outputLabel, UiTheme.Button(clearShell, "清空输出"), UiTheme.Button(saveShell, "保存输出")));
+        FormatOutput(shellOutput, true);
+        UiTheme.Add(output, shellOutput, true);
+        UiTheme.Add(layout, UiTheme.Split(edit, output, 230), true);
+        shellNotice.Text = "先刷新并选择设备，再执行命令。切换页面可继续运行任务。";
+        AddProgress(layout, shellProgress, shellNotice);
     }
-    static void Label(Control page, string text, int x, int y) { page.Controls.Add(new Label { Text = text, AutoSize = true, Location = new Point(x, y) }); }
-    static void Text(Control page, TextBox box, int x, int y, int width, int height, bool multiline)
+
+    void BuildFiles()
     {
-        box.SetBounds(x, y, width, height); box.Multiline = multiline; box.MaxLength = AdbText.Limit + 1024;
-        if (multiline) { box.ScrollBars = ScrollBars.Both; box.WordWrap = false; box.Font = new Font("Consolas", 10); }
-        page.Controls.Add(box);
+        var layout = UiTheme.Page(FilesPage);
+        UiTheme.Heading(layout, "ADB 文件传输", UiTheme.Button(fileStop, "停止任务", warning: true),
+            UiTheme.Button(fileRefresh, "刷新设备"));
+        UiTheme.Add(layout, filesHeader);
+
+        var send = UiTheme.Card(true);
+        var sendTitle = UiTheme.Label("推送到设备"); sendTitle.Font = UiTheme.Section;
+        UiTheme.Add(send, sendTitle);
+        pushRemote.Text = "/sdcard/Download/";
+        UiTheme.Add(send, UiTheme.Row(pushLocal, UiTheme.Label("本地来源"), pushLocal));
+        UiTheme.Add(send, UiTheme.Row(null, UiTheme.Button(pickFile, "选文件"), UiTheme.Button(pickDirectory, "选目录")));
+        UiTheme.Add(send, UiTheme.Row(pushRemote, UiTheme.Label("设备目标"), pushRemote, UiTheme.Button(browsePush, "浏览…")));
+        UiTheme.Add(send, UiTheme.Row(null, UiTheme.Button(push, "推送到设备", true)));
+
+        var receive = UiTheme.Card(true);
+        var receiveTitle = UiTheme.Label("拉取到电脑"); receiveTitle.Font = UiTheme.Section;
+        UiTheme.Add(receive, receiveTitle);
+        string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        pullLocal.Text = Directory.Exists(downloads) ? downloads : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        UiTheme.Add(receive, UiTheme.Row(pullRemote, UiTheme.Label("设备来源"), pullRemote, UiTheme.Button(browsePull, "浏览…")));
+        UiTheme.Add(receive, UiTheme.Row(pullLocal, UiTheme.Label("保存目录"), pullLocal));
+        UiTheme.Add(receive, UiTheme.Row(null, UiTheme.Button(pickDestination, "选择目录"), UiTheme.Button(openFolder, "打开目录"),
+            UiTheme.Button(pull, "拉取到电脑", true)));
+        UiTheme.Add(layout, UiTheme.Columns(true, send, receive));
+
+        var outputLabel = UiTheme.Label("传输日志");
+        UiTheme.Add(layout, UiTheme.Row(outputLabel, outputLabel, UiTheme.Button(clearFiles, "清空日志")));
+        FormatOutput(fileOutput, true);
+        UiTheme.Add(layout, fileOutput, true);
+        fileNotice.Text = "支持文件和目录；同名目标按 ADB 规则覆盖。取消传输可能留下部分文件。";
+        AddProgress(layout, fileProgress, fileNotice);
     }
-    static void Button(Control page, Button button, string text, int x, int y, int width)
-    { button.Text = text; button.SetBounds(x, y, width, 30); page.Controls.Add(button); }
+
+    static void AddProgress(TableLayoutPanel layout, ProgressBar progress, Label notice)
+    {
+        progress.Height = 6; progress.Style = ProgressBarStyle.Marquee; progress.Visible = false;
+        UiTheme.Add(layout, progress);
+        UiTheme.Status(notice);
+        UiTheme.Add(layout, notice);
+    }
+
+    static void FormatOutput(TextBox box, bool readOnly)
+    {
+        box.Multiline = true;
+        box.ReadOnly = readOnly;
+        box.BackColor = Color.White;
+        box.ScrollBars = ScrollBars.Both;
+        box.WordWrap = false;
+        box.Font = UiTheme.Mono;
+        box.MaxLength = AdbText.Limit + 1024;
+    }
 
     void BindEvents()
     {
@@ -142,14 +171,16 @@ internal sealed class AdbWorkspace : IDisposable
         }
         execute.Click += async delegate { await Execute(); };
         command.KeyDown += async delegate(object sender, KeyEventArgs e) { if (e.Control && e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; await Execute(); } };
-        stop.Click += delegate { stopped = true; if (running != null) running.Cancel(); };
-        refresh.Click += async delegate { await RefreshDevices(); };
+        EventHandler stopTask = delegate { stopped = true; if (running != null) running.Cancel(); };
+        stop.Click += stopTask; fileStop.Click += stopTask;
+        EventHandler refreshList = async delegate { await RefreshDevices(); };
+        refresh.Click += refreshList; fileRefresh.Click += refreshList;
         terminal.Click += delegate { OpenTerminal(); };
         push.Click += async delegate { await Transfer(true); }; pull.Click += async delegate { await Transfer(false); };
         clearShell.Click += delegate { shellLog.Clear(); Flush(); }; clearFiles.Click += delegate { fileLog.Clear(); Flush(); };
         saveShell.Click += delegate { SaveShell(); };
         openFolder.Click += delegate { if (Directory.Exists(pullLocal.Text)) Open(Path.GetFullPath(pullLocal.Text)); else Notice("本地保存目录不存在。"); };
-        history.SelectedIndexChanged += delegate { if (history.SelectedItem != null && !Busy) command.Text = history.SelectedItem.ToString(); };
+        history.SelectedIndexChanged += delegate { if (history.SelectedItem != null && !Busy && !changing) command.Text = history.SelectedItem.ToString(); };
         pickFile.Click += delegate {
             using (var dialog = new OpenFileDialog { Filter = "所有文件|*.*" }) if (dialog.ShowDialog() == DialogResult.OK) pushLocal.Text = dialog.FileName;
         };
@@ -187,10 +218,10 @@ internal sealed class AdbWorkspace : IDisposable
             header.Executable.Enabled = header.Browse.Enabled = header.Devices.Enabled = header.Address.Enabled = idle;
             header.Connect.Enabled = idle; header.Disconnect.Enabled = idle && selected != null && selected.Network;
             header.State.Text = String.IsNullOrWhiteSpace(executable) ? "未找到 ADB：下载并解压 Platform Tools，再选择 adb.exe。"
-                : selected != null ? selected.ToString() : devices.Length == 0 ? "点击左侧“刷新设备”；新电脑可将 platform-tools 放在 EXE 旁。" : "请选择设备；未授权时需在设备上确认 USB 调试。";
+                : selected != null ? selected.ToString() : devices.Length == 0 ? "点击“刷新设备”；新电脑可将 platform-tools 放在 EXE 旁。" : "请选择设备；未授权时需在设备上确认 USB 调试。";
         }
         execute.Enabled = terminal.Enabled = push.Enabled = pull.Enabled = browsePush.Enabled = browsePull.Enabled = ready;
-        stop.Enabled = Busy && !shuttingDown; refresh.Enabled = idle;
+        stop.Enabled = fileStop.Enabled = Busy && !shuttingDown; refresh.Enabled = fileRefresh.Enabled = idle;
         foreach (Control control in new Control[] { command, history, pushLocal, pushRemote, pullLocal, pullRemote, pickFile, pickDirectory, pickDestination }) control.Enabled = idle;
         shellProgress.Visible = fileProgress.Visible = Busy;
     }
@@ -208,7 +239,7 @@ internal sealed class AdbWorkspace : IDisposable
         shellNotice.Text = fileNotice.Text = text;
     }
 
-    async Task Perform(string name, AdbText log, Func<string, CancellationToken, Task> action, int timeout = 0, Func<RunRecording> beginRecording = null)
+    async Task Perform(string name, AdbText log, Func<string, CancellationToken, Task> action, int timeout = 0)
     {
         if (Busy || shuttingDown) return;
         var cancel = new CancellationTokenSource(); running = cancel; stopped = false;
@@ -216,44 +247,29 @@ internal sealed class AdbWorkspace : IDisposable
         if (timeout > 0) cancel.CancelAfter(timeout);
         UpdateControls(); Notice(name + "…");
         log.Append("\r\n[" + DateTime.Now.ToString("HH:mm:ss") + "] " + name + (selected == null ? "" : " · " + selected.Serial) + "\r\n");
-        string outcome = "失败"; recordedExit = null;
         try
         {
             string path = AdbLocator.Validate(executable);
-            if (beginRecording != null) activeRecording = beginRecording();
             await action(path, cancel.Token);
-            outcome = "成功";
             Notice(name + "完成。"); log.Append("\r\n[完成]\r\n");
         }
         catch (OperationCanceledException)
         {
-            outcome = "已停止";
             string message = stopped || shuttingDown ? "已停止本次 ADB 客户端；设备端命令可能仍在运行，传输可能留下部分文件。" : "ADB 操作超时，请检查连接后刷新设备。";
             log.Append("\r\n[停止] " + message + "\r\n"); Notice(message);
         }
-        catch (Exception ex) { log.Append("\r\n[错误] " + ex.Message + "\r\n"); if (activeRecording != null) activeRecording.Append("\r\n[错误] " + ex.Message, true); Notice(ex.Message); }
+        catch (Exception ex) { log.Append("\r\n[错误] " + ex.Message + "\r\n"); Notice(ex.Message); }
         finally
         {
-            if (activeRecording != null)
-            {
-                try { activeRecording.Finish(outcome, recordedExit); }
-                catch (Exception ex) { log.Append("\r\n[记录保存失败] " + ex.Message); Notice("记录保存失败：" + ex.Message); }
-                activeRecording = null;
-            }
             running = null; cancel.Dispose();
             if (!shuttingDown) { Flush(); UpdateControls(); }
             finished.TrySetResult(true);
         }
     }
 
-    async Task<AdbResult> Run(string path, string[] args, CancellationToken token, AdbText log)
+    Task<AdbResult> Run(string path, string[] args, CancellationToken token, AdbText log)
     {
-        var result = await AdbClient.Run(path, args, token, (text, error) => {
-            log.Append(error ? "[stderr] " + text : text);
-            if (activeRecording != null) activeRecording.Append(text, error);
-        });
-        if (activeRecording != null) recordedExit = result.ExitCode;
-        return result;
+        return AdbClient.Run(path, args, token, (text, error) => log.Append(error ? "[stderr] " + text : text));
     }
 
     internal Task RefreshDevices()
@@ -312,21 +328,25 @@ internal sealed class AdbWorkspace : IDisposable
         if (Busy || shuttingDown) return;
         string[] args;
         string text = command.Text;
-        string target = "";
         try
         {
             var device = RequireDevice();
-            target = "ADB · " + device.Serial + " · transport " + device.Transport;
             if (String.IsNullOrWhiteSpace(text)) throw new ArgumentException("请输入设备 Shell 命令。");
             args = device.Target.Concat(new[] { "shell", "-T", "-n", text.Replace("\r\n", "\n") }).ToArray();
             AdbClient.Arguments(args);
         }
         catch (Exception ex) { Notice(ex.Message); return; }
-        history.Items.Remove(text); history.Items.Insert(0, text); if (history.Items.Count > 30) history.Items.RemoveAt(30); history.SelectedIndex = 0;
+        changing = true;
+        try
+        {
+            history.Items.Remove(text);
+            history.Items.Insert(0, text);
+            if (history.Items.Count > 30) history.Items.RemoveAt(30);
+            history.SelectedIndex = 0;
+        }
+        finally { changing = false; }
         shellLog.Append("\r\n$ " + text + "\r\n");
-        var project = Projects == null ? null : Projects.Current;
-        await Perform("执行 Shell", shellLog, async (path, token) => { (await Run(path, args, token, shellLog)).EnsureSuccess(); }, 0,
-            project == null ? (Func<RunRecording>)null : () => Projects.Begin(project.Id, text, target, project.Directory));
+        await Perform("执行 Shell", shellLog, async (path, token) => { (await Run(path, args, token, shellLog)).EnsureSuccess(); });
     }
 
     internal async Task Transfer(bool pushing)

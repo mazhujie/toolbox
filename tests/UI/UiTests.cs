@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -50,29 +51,82 @@ internal static partial class ToolboxUiTests
             .Invoke(link, new object[] { new LinkLabelLinkClickedEventArgs(link.Links[0]) });
     }
 
+    static void PressSendShortcut(TextBox editor)
+    {
+        var key = new KeyEventArgs(Keys.Control | Keys.Enter);
+        typeof(Control).GetMethod("OnKeyDown", BindingFlags.Instance | BindingFlags.NonPublic)
+            .Invoke(editor, new object[] { key });
+        Assert(key.SuppressKeyPress, "Ctrl+Enter handled without inserting a newline");
+    }
+
     static Options IpRoute(IpPage page)
     {
         return (Options)typeof(IpPage).GetMethod("ReadRoute", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(page, null);
     }
 
+    static IEnumerable<Button> PageButtons(Control parent)
+    {
+        foreach (Control child in parent.Controls)
+        {
+            if (!child.Visible) continue;
+            var button = child as Button;
+            if (button != null) yield return button;
+            foreach (var nested in PageButtons(child)) yield return nested;
+        }
+    }
+
+    static async Task VerifyLayouts(MainForm form, ToolShell shell)
+    {
+        var subPages = Field<FlowLayoutPanel>(shell, "pages");
+        var content = Field<Panel>(shell, "content");
+        var side = Field<Panel>(shell, "side");
+        var ids = new[] { "speed", "ip", "lan", "serial", "socket", "capture", "adb-shell", "adb-files" };
+        Size original = form.Size;
+        Assert(side.Controls.OfType<Button>().Count() == 4 && subPages.Parent != side, "four left categories and top subpages");
+        var packets = Field<ListView>(Field<CapturePage>(form, "capturePage"), "packets");
+        int compactContentWidth = 0, compactSummaryWidth = 0;
+        foreach (var size in new[] { new Size(1050, 759), new Size(1440, 900) })
+        {
+            form.Size = size;
+            string suffix = "-" + size.Width + "x" + size.Height;
+            foreach (var id in ids)
+            {
+                shell.ShowView(id);
+                await Task.Delay(35);
+                Control page = content.Controls.Cast<Control>().Single(c => c.Visible);
+                var actions = PageButtons(page).ToArray();
+                Assert(shell.CurrentView == id && subPages.Controls.Count > 0 && actions.Length >= 3, "navigation and page actions: " + id);
+                Capture(form, "preview-" + id + suffix + ".png");
+                var occupied = new List<Rectangle>();
+                foreach (Button button in actions)
+                {
+                    Rectangle bounds = button.RectangleToScreen(button.ClientRectangle);
+                    Assert(!occupied.Any(previous => previous.IntersectsWith(bounds)), id + " actions do not overlap: " + button.Text);
+                    occupied.Add(bounds);
+                    Assert(bounds.Width > 0 && bounds.Height > 0, id + " action has a visible area: " + button.Text);
+                    for (Control parent = button.Parent; parent != form; parent = parent.Parent)
+                        Assert(parent.RectangleToScreen(parent.ClientRectangle).Contains(bounds), id + " action inside " + parent.GetType().Name + ": " + button.Text);
+                }
+            }
+            if (size.Width == 1050)
+            {
+                compactContentWidth = content.Width;
+                compactSummaryWidth = packets.Columns[6].Width;
+            }
+            else Assert(content.Width > compactContentWidth && packets.Columns[6].Width > compactSummaryWidth,
+                "page and capture summary grow with the form");
+        }
+        form.Size = original;
+        report.AppendLine("PASS four left categories, top subpages and visible page actions at both window sizes");
+    }
+
     static async Task Exercise(MainForm form, SerialSession session, Func<FakeSerialTransport> current, Func<SerialSettings> applied)
     {
         var shell = Field<ToolShell>(form, "shell");
-        var actions = Field<FlowLayoutPanel>(shell, "actions");
-        foreach (var id in new[] { "speed", "ip", "lan", "serial", "socket", "capture", "adb-shell", "adb-files", "speed" })
-        {
-            shell.ShowView(id);
-            await Task.Delay(30);
-            Assert(shell.CurrentView == id && actions.Controls.Count >= 3, "navigation: " + id);
-            Assert(actions.Controls.Cast<Control>().All(c => c.Parent == actions), "left action placement");
-            Capture(form, "preview-" + id + ".png");
-        }
-        report.AppendLine("PASS eight pages, four independent categories and left action placement");
-
+        await VerifyLayouts(form, shell);
         await ExerciseNetworkPages(form, shell);
         await ExerciseSockets(form, shell);
         await ExerciseCapture(form, shell);
-        await ExerciseProjects(form, shell);
         await ExerciseAdb(form, shell);
         await ExerciseSerial(form, shell, session, current, applied);
     }
@@ -96,18 +150,31 @@ internal static partial class ToolboxUiTests
             return new[] { new CaptureAdapter { Name = "fake", Description = "模拟网卡 · TEST DATA" } };
         }, options => packetSource = new FakePacketSource(), Path.Combine(output, "capture-ui-" + Guid.NewGuid().ToString("N")));
         bool passed = false;
-        using (var form = new MainForm(session, adb, capture, new ProjectStore(Path.Combine(Path.GetTempPath(), "toolbox-ui-projects-" + Guid.NewGuid().ToString("N")))))
+        string settingsPath = Path.Combine(Path.GetTempPath(), "toolbox-ui-settings-" + Guid.NewGuid().ToString("N") + ".json");
+        File.WriteAllText(settingsPath, "{\"View\":\"projects\"}");
+        using (var form = new MainForm(session, adb, capture, settingsPath))
         {
             var sockets = Field<SocketSession>(Field<SocketPage>(form, "socketPage"), "session");
+            var shell = Field<ToolShell>(form, "shell");
             form.Shown += async delegate
             {
-                try { await Exercise(form, session, () => fake, () => parameters); passed = true; }
+                try
+                {
+                    Assert(shell.CurrentView == "speed", "unknown saved view falls back to speed test");
+                    await Exercise(form, session, () => fake, () => parameters);
+                    passed = true;
+                }
                 catch (Exception ex) { report.AppendLine(ex.ToString()); File.WriteAllText(Path.Combine(output, "ui-test.txt"), report.ToString(), Encoding.UTF8); }
                 form.Close();
             };
             Application.Run(form);
             passed = passed && !sockets.IsOpen && !adb.Busy && !capture.Busy;
+            var saved = UiSettings.Load(settingsPath);
+            bool settingsSaved = saved.View == shell.CurrentView && saved.Width == form.Width && saved.Height == form.Height;
+            passed = passed && settingsSaved;
+            report.AppendLine(settingsSaved ? "PASS window size and view saved separately on close" : "FAIL saving window settings");
         }
+        File.Delete(settingsPath);
         passed = passed && !session.IsOpen && fake != null && fake.Disposed;
         report.AppendLine(passed ? "PASS form close stops sending and releases serial transport" : "FAIL UI test or shutdown");
         string pidFile = Path.Combine(fixtureRoot, "pid.txt");

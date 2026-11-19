@@ -72,7 +72,7 @@ internal static class Npcap
             if (loaded) return;
             string system = Environment.SystemDirectory;
             string path = new[] { Path.Combine(system, "Npcap", Library), Path.Combine(system, Library) }.FirstOrDefault(File.Exists);
-            if (path == null) throw new IOException("未找到 Npcap。请从左侧官网入口安装 Npcap，然后刷新网卡。");
+            if (path == null) throw new IOException("未找到 Npcap。请通过“获取 Npcap”安装，然后刷新网卡。");
             // Load only the installed system library and its own/system dependencies, never a DLL beside the EXE.
             module = LoadLibraryEx(path, IntPtr.Zero, 0x100 | 0x800);
             if (module == IntPtr.Zero) throw new IOException("Npcap 加载失败（Windows 错误 " + Marshal.GetLastWin32Error() + "），请修复与系统位数匹配的 Npcap 安装。");

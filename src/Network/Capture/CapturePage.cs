@@ -31,32 +31,44 @@ internal sealed class CapturePage : UserControl
     CaptureSession session;
     string captureFile;
     internal bool Busy { get { return busy; } }
-    internal Button[] Actions { get { return new[] { start, stop, refresh, save, openFolder, install }; } }
 
     internal CapturePage(Func<CaptureAdapter[]> list = null, Func<CaptureOptions, IPacketSource> source = null, string outputFolder = null)
     {
         catalog = list ?? Npcap.Adapters; factory = source ?? (options => new NpcapSource(options));
-        BackColor = Color.FromArgb(245, 247, 251); Font = new Font("Microsoft YaHei UI", 10); AutoScroll = true;
-        Controls.Add(new Label { Text = "实时网络抓包", Font = new Font(Font.FontFamily, 21, FontStyle.Bold), Location = new Point(24, 20), Size = new Size(460, 44) });
-        state.SetBounds(490, 28, 278, 30); state.TextAlign = ContentAlignment.MiddleRight; Controls.Add(state);
-        Label("抓包网卡", 24, 86); adapters.SetBounds(120, 80, 648, 30); adapters.DropDownStyle = ComboBoxStyle.DropDownList; Controls.Add(adapters);
-        Label("过滤 BPF", 24, 130); filter.SetBounds(120, 124, 648, 28); filter.MaxLength = 2048; Controls.Add(filter);
-        Label("留空抓取所选网卡流量；示例：tcp、udp port 53、host 192.168.1.20", 24, 162);
-        Label("时长上限", 24, 204); Number(seconds, 120, 198, 90, 1, 3600, 60); Label("秒", 222, 204);
-        Label("文件上限", 296, 204); Number(megabytes, 392, 198, 90, 1, 512, 64); Label("MiB", 494, 204);
-        promiscuous.Text = "混杂模式"; promiscuous.SetBounds(604, 198, 164, 30); Controls.Add(promiscuous);
-        Label("保存目录", 24, 248); folder.SetBounds(120, 242, 546, 28); Controls.Add(folder);
+        var layout = UiTheme.Page(this);
+        UiTheme.Heading(layout, "实时抓包", UiTheme.Button(start, "开始抓包", true),
+            UiTheme.Button(stop, "停止抓包", warning: true), UiTheme.Button(refresh, "刷新网卡"));
+        UiTheme.Status(state); UiTheme.Status(counters); UiTheme.Status(notice);
+        adapters.DropDownStyle = ComboBoxStyle.DropDownList;
+        filter.MaxLength = 2048;
+        UiTheme.Number(seconds, 74, 1, 3600, 60);
+        UiTheme.Number(megabytes, 74, 1, 512, 64);
+        UiTheme.Check(promiscuous, "混杂模式", false);
+        UiTheme.Check(pause, "暂停显示", false);
+        UiTheme.Check(follow, "自动滚动", true);
         folder.Text = outputFolder ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ToolboxCaptures");
-        chooseFolder.Text = "选目录"; chooseFolder.SetBounds(678, 242, 90, 30); Controls.Add(chooseFolder);
-        pause.Text = "暂停显示"; pause.SetBounds(24, 282, 124, 30); Controls.Add(pause);
-        follow.Text = "自动滚动"; follow.SetBounds(154, 282, 124, 30); follow.Checked = true; Controls.Add(follow);
-        counters.SetBounds(292, 286, 476, 26); counters.AutoEllipsis = true; Controls.Add(counters);
-        packets.SetBounds(24, 322, 744, 206); packets.View = View.Details; packets.FullRowSelect = true; packets.MultiSelect = false; packets.HideSelection = false; packets.VirtualMode = true;
-        foreach (var column in new[] { new ColumnHeader { Text = "序号", Width = 60 }, new ColumnHeader { Text = "时间", Width = 104 }, new ColumnHeader { Text = "源地址", Width = 164 }, new ColumnHeader { Text = "目标地址", Width = 164 }, new ColumnHeader { Text = "协议", Width = 68 }, new ColumnHeader { Text = "长度", Width = 64 }, new ColumnHeader { Text = "摘要", Width = 260 } }) packets.Columns.Add(column);
-        Controls.Add(packets); Label("选中数据包查看详情  ·  HEX / ASCII", 24, 540);
-        detail.SetBounds(24, 570, 744, 124); detail.Multiline = true; detail.ReadOnly = true; detail.BackColor = Color.White; detail.WordWrap = false; detail.ScrollBars = ScrollBars.Both; detail.Font = new Font("Consolas", 10); detail.MaxLength = 100000; Controls.Add(detail);
-        notice.SetBounds(24, 708, 744, 48); notice.ForeColor = Color.DimGray; notice.Text = "先安装 Npcap，再刷新网卡。点击开始后抓包；PCAP 自动保存，列表保留最近 1,000 包 / 8 MiB。"; Controls.Add(notice);
-        start.Text = "开始抓包"; stop.Text = "停止抓包"; refresh.Text = "刷新网卡"; save.Text = "另存 PCAP"; openFolder.Text = "打开抓包目录"; install.Text = "Npcap 官网 / 下载";
+        var inputs = UiTheme.Card(true);
+        UiTheme.Add(inputs, UiTheme.Row(adapters, UiTheme.Label("抓包网卡"), adapters, UiTheme.Button(install, "获取 Npcap")));
+        UiTheme.Add(inputs, UiTheme.Row(filter, UiTheme.Label("过滤 BPF"), filter));
+        UiTheme.Add(inputs, UiTheme.Row(null, UiTheme.Label("时长上限"), seconds, UiTheme.Label("秒     文件上限"), megabytes, UiTheme.Label("MiB"), promiscuous));
+        UiTheme.Add(inputs, UiTheme.Row(folder, UiTheme.Label("保存目录"), folder, UiTheme.Button(chooseFolder, "选择目录"),
+            UiTheme.Button(openFolder, "打开目录"), UiTheme.Button(save, "另存 PCAP")));
+        UiTheme.Add(layout, inputs);
+        UiTheme.Add(layout, UiTheme.Row(counters, state, pause, follow, counters));
+
+        packets.View = View.Details; packets.FullRowSelect = true; packets.MultiSelect = false; packets.HideSelection = false; packets.VirtualMode = true;
+        packets.Columns.Add("序号", 54); packets.Columns.Add("时间", 96);
+        packets.Columns.Add("源地址", 125); packets.Columns.Add("目标地址", 125);
+        packets.Columns.Add("协议", 62); packets.Columns.Add("长度", 56); packets.Columns.Add("摘要", 150);
+        packets.SizeChanged += delegate { ResizeColumns(); };
+        detail.Multiline = true; detail.ReadOnly = true; detail.BackColor = Color.White;
+        detail.WordWrap = false; detail.ScrollBars = ScrollBars.Both; detail.Font = UiTheme.Mono; detail.MaxLength = 100000;
+        var detailPanel = UiTheme.Stack();
+        UiTheme.Add(detailPanel, UiTheme.Label("数据包详情 · HEX / ASCII"));
+        UiTheme.Add(detailPanel, detail, true);
+        UiTheme.Add(layout, UiTheme.Split(packets, detailPanel, 170), true);
+        notice.Text = "PCAP 自动保存。界面显示最近 1,000 包 / 8 MiB。";
+        UiTheme.Add(layout, notice);
         start.Click += async delegate { await StartCapture(); }; stop.Click += delegate { if (cancellation != null) cancellation.Cancel(); };
         refresh.Click += async delegate { await RefreshAdapters(); };
         save.Click += delegate { Save(); }; openFolder.Click += delegate { OpenDirectory(); };
@@ -72,8 +84,14 @@ internal sealed class CapturePage : UserControl
         packets.SelectedIndexChanged += delegate { if (packets.SelectedIndices.Count > 0 && packets.SelectedIndices[0] < shown.Length) detail.Text = PacketDecoder.Detail(shown[packets.SelectedIndices[0]]); };
         timer.Tick += delegate { Drain(); }; timer.Start(); UpdateControls();
     }
-    void Label(string text, int x, int y) { Controls.Add(new Label { Text = text, AutoSize = true, Location = new Point(x, y) }); }
-    void Number(NumericUpDown box, int x, int y, int width, int min, int max, int value) { box.SetBounds(x, y, width, 28); box.Minimum = min; box.Maximum = max; box.Value = value; Controls.Add(box); }
+    void ResizeColumns()
+    {
+        int width = packets.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4;
+        int addressWidth = Math.Max(108, Math.Min(185, width / 5));
+        packets.Columns[2].Width = packets.Columns[3].Width = addressWidth;
+        packets.Columns[6].Width = Math.Max(84, width - 268 - 2 * addressWidth);
+    }
+
     void UpdateControls()
     {
         bool idle = !busy && !shuttingDown;
@@ -93,11 +111,12 @@ internal sealed class CapturePage : UserControl
             var result = await Task.Run(catalog);
             if (shuttingDown) return;
             adapters.Items.Clear(); adapters.Items.AddRange(result);
+            install.Visible = result.Length == 0;
             adapters.SelectedItem = result.FirstOrDefault(a => a.Name == previous);
             if (previous == null && result.Length == 1) adapters.SelectedIndex = 0;
             notice.Text = result.Length == 0 ? "未发现可抓包网卡，请检查 Npcap 安装、驱动服务与权限。" : "已发现 " + result.Length + " 个网卡，请选择后开始。回环网卡用于本机进程间流量。";
         }
-        catch (Exception ex) { if (!shuttingDown) { adapters.Items.Clear(); notice.Text = ex.Message; } }
+        catch (Exception ex) { if (!shuttingDown) { adapters.Items.Clear(); install.Visible = true; notice.Text = ex.Message; } }
         finally { busy = false; if (!shuttingDown) UpdateControls(); done.TrySetResult(true); }
     }
     internal async Task StartCapture()

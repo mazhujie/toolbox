@@ -118,7 +118,7 @@ internal sealed class AdbBrowser : Form
         read = reader; directoriesOnly = onlyDirectories;
         initial = String.IsNullOrWhiteSpace(initialPath) ? "/" : initialPath;
         Text = onlyDirectories ? "浏览板端目录 · 选择推送目标" : "浏览板端文件 · 选择拉取来源";
-        Font = new Font("Microsoft YaHei UI", 10); ClientSize = new Size(820, 600); MinimumSize = new Size(740, 550);
+        Font = UiTheme.Body; ClientSize = new Size(820, 600); MinimumSize = new Size(740, 550);
         StartPosition = FormStartPosition.CenterParent; ShowInTaskbar = false; MinimizeBox = false;
         BackColor = Color.FromArgb(245, 247, 251);
         Controls.Add(new Label { Text = "设备：" + device, Location = new Point(20, 16), Size = new Size(780, 28), AutoEllipsis = true, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right });
@@ -131,7 +131,9 @@ internal sealed class AdbBrowser : Form
         Add(refresh, "刷新", 700, 96, 100);
         entries.SetBounds(20, 138, 780, 342); entries.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         entries.View = View.Details; entries.FullRowSelect = true; entries.MultiSelect = false; entries.HideSelection = false; entries.ShowItemToolTips = true;
-        entries.Columns.Add("名称", 590); entries.Columns.Add("类型", 160); Controls.Add(entries);
+        entries.Columns.Add("名称", 590); entries.Columns.Add("类型", 148); Controls.Add(entries);
+        entries.SizeChanged += delegate { ResizeColumns(); };
+        ResizeColumns();
         status.SetBounds(20, 492, 780, 44); status.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right; status.ForeColor = Color.DimGray; Controls.Add(status);
         Add(current, "使用当前目录", 20, 548, 154); current.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
         Add(choose, onlyDirectories ? "选择此目录" : "选择此文件 / 目录", 502, 548, 186); choose.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
@@ -157,6 +159,12 @@ internal sealed class AdbBrowser : Form
         FormClosing += delegate(object sender, FormClosingEventArgs e) { closing = true; if (Busy) { e.Cancel = true; running.Cancel(); status.Text = "正在停止目录读取…"; } };
         FormClosed += delegate { closed.TrySetResult(true); };
         UpdateControls();
+    }
+
+    void ResizeColumns()
+    {
+        int usable = entries.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4;
+        entries.Columns[0].Width = Math.Max(120, usable - entries.Columns[1].Width);
     }
 
     void Add(Button button, string text, int x, int y, int width)

@@ -17,8 +17,9 @@ internal sealed class SocketPage : UserControl
     readonly ComboBox protocol = new ComboBox(), localAddress = new ComboBox(), peers = new ComboBox(), encoding = new ComboBox(), ending = new ComboBox();
     readonly NumericUpDown localPort = new NumericUpDown(), remotePort = new NumericUpDown(), interval = new NumericUpDown();
     readonly TextBox remoteHost = new TextBox(), incoming = new TextBox(), outgoing = new TextBox();
-    readonly CheckBox rxHex = new CheckBox(), txHex = new CheckBox(), logging = new CheckBox(), newlines = new CheckBox(), pause = new CheckBox(), escapes = new CheckBox();
-    readonly Label state = new Label(), status = new Label(), counters = new Label(), notice = new Label(), targetLabel = new Label(), portLabel = new Label();
+    readonly CheckBox rxHex = new CheckBox(), txHex = new CheckBox(), logging = new CheckBox(), newlines = new CheckBox(), pause = new CheckBox(), escapes = new CheckBox(), autoscroll = new CheckBox();
+    readonly Label state = new Label(), status = new Label(), counters = new Label(), notice = new Label(), targetLabel = UiTheme.Label("目标地址");
+    readonly TableLayoutPanel remoteRow, peerRow;
     readonly Button connect = new Button(), refresh = new Button(), send = new Button(), automatic = new Button(), disconnect = new Button(), clear = new Button(), save = new Button(), loadFile = new Button();
     readonly System.Windows.Forms.Timer displayTimer = new System.Windows.Forms.Timer { Interval = 100 }, sendTimer = new System.Windows.Forms.Timer();
     readonly object queueLock = new object();
@@ -33,62 +34,64 @@ internal sealed class SocketPage : UserControl
     long repeatPeer;
     byte[] repeatPayload;
     bool IsServer { get { return protocol.SelectedIndex == 2; } }
-    internal Button[] Actions { get { return new[] { connect, refresh, send, automatic, disconnect, clear, save, loadFile }; } }
 
     internal SocketPage()
     {
-        BackColor = Color.FromArgb(245, 247, 251);
-        Font = new Font("Microsoft YaHei UI", 10);
-        AutoScroll = true;
-        Controls.Add(new Label { Text = "TCP / UDP 网络调试", Font = new Font(Font.FontFamily, 21, FontStyle.Bold), Location = new Point(24, 20), Size = new Size(420, 44) });
-        state.SetBounds(450, 28, 318, 30); state.TextAlign = ContentAlignment.MiddleRight; Controls.Add(state);
-        Label("协议", 24, 86);
-        Combo(protocol, 82, 80, 178, new[] { "UDP", "TCP 客户端", "TCP 服务端" }, 0);
-        Label("本地地址", 282, 86);
-        Combo(localAddress, 370, 80, 190, new string[0], -1); localAddress.DropDownStyle = ComboBoxStyle.DropDown;
-        Label("端口", 580, 86); Number(localPort, 646, 80, 122, 0, 65535, 8080);
-        targetLabel.Text = "目标地址"; targetLabel.SetBounds(24, 126, 80, 26); Controls.Add(targetLabel);
-        remoteHost.SetBounds(112, 120, 350, 28); remoteHost.Text = "127.0.0.1"; Controls.Add(remoteHost);
-        portLabel.Text = "目标端口"; portLabel.SetBounds(486, 126, 86, 26); Controls.Add(portLabel);
-        Number(remotePort, 580, 120, 188, 1, 65535, 8080);
-        Combo(peers, 112, 120, 656, new string[0], -1);
-        status.SetBounds(24, 164, 744, 28); status.ForeColor = Color.DimGray; Controls.Add(status);
+        var layout = UiTheme.Page(this);
+        UiTheme.Heading(layout, "TCP / UDP 收发", UiTheme.Button(connect, "打开 UDP", true),
+            UiTheme.Button(refresh, "刷新地址"), UiTheme.Button(clear, "清空记录"), UiTheme.Button(save, "保存日志"));
+        var inputs = UiTheme.Card(true);
+        UiTheme.Combo(protocol, 145, new[] { "UDP", "TCP 客户端", "TCP 服务端" }, 0);
+        localAddress.DropDownStyle = ComboBoxStyle.DropDown;
+        UiTheme.Number(localPort, 95, 0, 65535, 8080);
+        UiTheme.Number(remotePort, 95, 1, 65535, 8080);
+        remoteHost.Text = "127.0.0.1";
+        peers.DropDownStyle = ComboBoxStyle.DropDownList;
+        UiTheme.Add(inputs, UiTheme.Row(localAddress, UiTheme.Label("协议"), protocol, UiTheme.Label("本地地址"), localAddress, UiTheme.Label("本地端口"), localPort));
+        remoteRow = UiTheme.Row(remoteHost, UiTheme.Label("目标地址"), remoteHost, UiTheme.Label("目标端口"), remotePort);
+        peerRow = UiTheme.Row(peers, targetLabel, peers, UiTheme.Button(disconnect, "断开选中客户端"));
+        UiTheme.Add(inputs, remoteRow);
+        UiTheme.Add(inputs, peerRow);
+        UiTheme.Add(layout, inputs);
 
-        Check(rxHex, "HEX 显示", 24, 200, 116, false);
-        Check(logging, "日志模式", 154, 200, 116, true);
-        Check(newlines, "自动换行", 284, 200, 116, true);
-        Check(pause, "暂停显示", 414, 200, 116, false);
-        Label("编码", 562, 206); Combo(encoding, 622, 200, 146, new[] { "UTF-8", "ASCII", "GBK" }, 0);
-        incoming.SetBounds(24, 238, 744, 220); incoming.Multiline = true; incoming.ReadOnly = true;
-        incoming.ScrollBars = ScrollBars.Vertical; incoming.BackColor = Color.White; incoming.MaxLength = 2097152;
-        incoming.Font = new Font("Consolas", 10); Controls.Add(incoming);
-        counters.SetBounds(24, 468, 744, 28); Controls.Add(counters);
-        Check(txHex, "HEX 发送", 24, 510, 116, false);
-        Check(escapes, "解析转义符", 154, 510, 130, false);
-        Label("结尾", 310, 516); Combo(ending, 366, 510, 110, new[] { "无", "CRLF", "LF", "CR" }, 0);
-        Label("间隔 ms", 502, 516); Number(interval, 600, 510, 168, 100, 3600000, 1000);
-        outgoing.SetBounds(24, 550, 744, 116); outgoing.Multiline = true; outgoing.ScrollBars = ScrollBars.Vertical;
-        outgoing.MaxLength = 200000; outgoing.Font = new Font("Consolas", 11); Controls.Add(outgoing);
-        notice.SetBounds(24, 684, 744, 48); notice.ForeColor = Color.DimGray;
-        notice.Text = "直接使用系统路由，不应用 HTTP 代理。TCP 按数据流接收；UDP 每次发送一个数据报。"; Controls.Add(notice);
-        connect.Text = "打开 UDP"; refresh.Text = "刷新本地地址"; send.Text = "发送一次"; automatic.Text = "开始定时发送";
-        disconnect.Text = "断开选中客户端"; clear.Text = "清空记录 / 计数"; save.Text = "保存日志"; loadFile.Text = "载入文件为 HEX";
+        UiTheme.Status(state); UiTheme.Status(status);
+        UiTheme.Add(layout, UiTheme.Row(status, state, status));
+
+        var receive = UiTheme.Stack();
+        UiTheme.Check(rxHex, "HEX 显示", false);
+        UiTheme.Check(logging, "日志模式", true);
+        UiTheme.Check(newlines, "自动换行", true);
+        UiTheme.Check(pause, "暂停显示", false);
+        UiTheme.Check(autoscroll, "自动滚动", true);
+        UiTheme.Combo(encoding, 98, new[] { "UTF-8", "ASCII", "GBK" }, 0);
+        UiTheme.Add(receive, UiTheme.Row(null, UiTheme.Label("接收区"), rxHex, logging, newlines, pause, autoscroll, UiTheme.Label("编码"), encoding));
+        incoming.Multiline = true; incoming.ReadOnly = true; incoming.ScrollBars = ScrollBars.Vertical;
+        incoming.BackColor = Color.White; incoming.MaxLength = 2097152; incoming.Font = UiTheme.Mono;
+        UiTheme.Add(receive, incoming, true);
+        UiTheme.Status(counters);
+        UiTheme.Add(receive, counters);
+
+        var transmit = UiTheme.Stack();
+        UiTheme.Check(txHex, "HEX 发送", false);
+        UiTheme.Check(escapes, "解析转义符", false);
+        UiTheme.Combo(ending, 80, new[] { "无", "CRLF", "LF", "CR" }, 0);
+        UiTheme.Number(interval, 95, 100, 3600000, 1000);
+        UiTheme.Add(transmit, UiTheme.Row(null, UiTheme.Label("发送区"), txHex, escapes, UiTheme.Label("结尾"), ending, UiTheme.Label("间隔 ms"), interval));
+        var sendHint = UiTheme.Label("Ctrl+Enter 发送");
+        sendHint.ForeColor = UiTheme.Muted;
+        UiTheme.Add(transmit, UiTheme.Row(sendHint, sendHint, UiTheme.Button(loadFile, "载入为 HEX"),
+            UiTheme.Button(send, "发送一次", true), UiTheme.Button(automatic, "开始定时发送")));
+        outgoing.Multiline = true; outgoing.ScrollBars = ScrollBars.Vertical; outgoing.MaxLength = 200000; outgoing.Font = UiTheme.Mono;
+        UiTheme.Add(transmit, outgoing, true);
+        UiTheme.Add(layout, UiTheme.Split(receive, transmit, 192), true);
+        UiTheme.Status(notice);
+        notice.Text = "使用系统路由。TCP 按数据流接收，UDP 每次发送一个数据报。";
+        UiTheme.Add(layout, notice);
         BindEvents();
         RefreshAddresses();
         SetMode();
         displayTimer.Start();
     }
-
-    void Label(string text, int x, int y) { Controls.Add(new Label { Text = text, AutoSize = true, Location = new Point(x, y) }); }
-    void Combo(ComboBox box, int x, int y, int width, string[] items, int index)
-    {
-        box.SetBounds(x, y, width, 30); box.DropDownStyle = ComboBoxStyle.DropDownList;
-        box.Items.AddRange(items); if (index >= 0) box.SelectedIndex = index; Controls.Add(box);
-    }
-    void Number(NumericUpDown box, int x, int y, int width, int min, int max, int value)
-    { box.SetBounds(x, y, width, 30); box.Minimum = min; box.Maximum = max; box.Value = value; Controls.Add(box); }
-    void Check(CheckBox box, string text, int x, int y, int width, bool value)
-    { box.SetBounds(x, y, width, 30); box.Text = text; box.Checked = value; Controls.Add(box); }
 
     void BindEvents()
     {
@@ -96,6 +99,9 @@ internal sealed class SocketPage : UserControl
         connect.Click += async delegate { await ToggleConnection(); };
         refresh.Click += delegate { RefreshAddresses(); };
         send.Click += async delegate { await SendOnce(); };
+        outgoing.KeyDown += delegate(object sender, KeyEventArgs e) {
+            if (e.Control && e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; send.PerformClick(); }
+        };
         automatic.Click += delegate { ToggleAutomatic(); };
         disconnect.Click += delegate { if (peers.SelectedItem != null) session.Disconnect(((SocketPeer)peers.SelectedItem).Id); RefreshState(); };
         clear.Click += delegate { ClearRecords(); };
@@ -114,10 +120,9 @@ internal sealed class SocketPage : UserControl
     void SetMode()
     {
         localPort.Value = protocol.SelectedIndex == 1 ? 0 : 8080;
-        targetLabel.Text = IsServer ? "发送给" : "目标地址";
-        peers.Visible = IsServer;
-        remoteHost.Visible = remotePort.Visible = portLabel.Visible = !IsServer;
-        disconnect.Visible = IsServer;
+        targetLabel.Text = "发送给";
+        remoteRow.Visible = !IsServer;
+        peerRow.Visible = IsServer;
         peerSignature = "";
         RefreshState();
     }
@@ -294,9 +299,15 @@ internal sealed class SocketPage : UserControl
     void Render()
     {
         if (IsDisposed || encoding.SelectedIndex < 0) return;
+        int start = incoming.SelectionStart, length = incoming.SelectionLength;
         incoming.Text = (history.Trimmed ? "[较早记录已裁剪]\r\n" : "")
             + DataCodec.RenderNetwork(history.Entries, rxHex.Checked, encoding.Text, logging.Checked, newlines.Checked);
-        incoming.SelectionStart = incoming.TextLength; incoming.SelectionLength = 0; incoming.ScrollToCaret();
+        if (autoscroll.Checked)
+        {
+            incoming.Select(incoming.TextLength, 0);
+            incoming.ScrollToCaret();
+        }
+        else incoming.Select(Math.Min(start, incoming.TextLength), Math.Min(length, Math.Max(0, incoming.TextLength - start)));
     }
 
     void RefreshState()

@@ -13,7 +13,8 @@ using System.Windows.Forms;
 internal sealed class SerialWorkspace : IDisposable
 {
     internal readonly UserControl Terminal = new UserControl();
-    readonly Panel advancedPanel = new Panel(), traffic = new Panel(), sendOptions = new Panel();
+    readonly Panel advancedPanel = new Panel();
+    readonly TableLayoutPanel layout;
     readonly TabControl sendTabs = new TabControl();
     readonly DataGridView commands = new DataGridView();
     readonly FlowLayoutPanel commandTools = new FlowLayoutPanel();
@@ -34,15 +35,14 @@ internal sealed class SerialWorkspace : IDisposable
     CancellationTokenSource sendCancellation;
     string connectionText = "未连接";
     bool MultiSend { get { return sendTabs.SelectedIndex == 1; } }
-    internal Button[] TerminalActions { get { return new[] { connect, refresh, send, automatic, clear, save }; } }
     internal SerialWorkspace(SerialSession connection = null)
     {
         session = connection ?? new SerialSession();
-        Terminal.BackColor = Color.FromArgb(245, 247, 251);
-        Terminal.AutoScroll = true;
-        Terminal.Font = new Font("Microsoft YaHei UI", 10);
-        BuildTerminal();
+        layout = UiTheme.Page(Terminal);
+        UiTheme.Heading(layout, "串口收发", UiTheme.Button(connect, "连接串口", true),
+            UiTheme.Button(refresh, "刷新端口"), UiTheme.Button(clear, "清空记录"), UiTheme.Button(save, "保存日志"));
         BuildConnection();
+        BuildTerminal();
         LayoutTerminal();
         BindEvents();
         displayTimer.Start();
@@ -51,43 +51,42 @@ internal sealed class SerialWorkspace : IDisposable
 
     void BuildTerminal()
     {
-        Title(Terminal, "串口收发");
-        state.SetBounds(356, 28, 412, 30); state.TextAlign = ContentAlignment.MiddleRight; Terminal.Controls.Add(state);
-        config.SetBounds(24, 118, 744, 26); config.ForeColor = Color.DimGray; Terminal.Controls.Add(config);
-        traffic.SetBounds(24, 150, 744, 554); Terminal.Controls.Add(traffic);
-        var receiveOptions = new Panel { Size = new Size(744, 30) };
-        traffic.Controls.Add(receiveOptions);
-        LabelAt(receiveOptions, "接收区", 0, 6);
-        Check(receiveOptions, timestamps, "时间戳", 86, 0, 100, true);
-        Check(receiveOptions, rxHex, "HEX 显示", 196, 0, 112, false);
-        Check(receiveOptions, showTx, "显示发送", 318, 0, 112, true);
-        Check(receiveOptions, autoscroll, "自动滚动", 438, 0, 110, true);
-        LabelAt(receiveOptions, "编码", 566, 6);
-        Combo(receiveOptions, encoding, 616, 0, 128, new[] { "UTF-8", "GBK", "ASCII" }, 0);
-        incoming.SetBounds(0, 38, 744, 260); incoming.ReadOnly = true; incoming.BackColor = Color.White; incoming.Font = new Font("Consolas", 10);
+        var receive = UiTheme.Stack();
+        UiTheme.Check(timestamps, "时间戳", true);
+        UiTheme.Check(rxHex, "HEX 显示", false);
+        UiTheme.Check(showTx, "显示发送", true);
+        UiTheme.Check(autoscroll, "自动滚动", true);
+        UiTheme.Combo(encoding, 105, new[] { "UTF-8", "GBK", "ASCII" }, 0);
+        UiTheme.Add(receive, UiTheme.Row(null, UiTheme.Label("接收区"), timestamps, rxHex, showTx, autoscroll, UiTheme.Label("编码"), encoding));
+        incoming.ReadOnly = true; incoming.BackColor = Color.White; incoming.Font = UiTheme.Mono;
         incoming.Multiline = true; incoming.ScrollBars = ScrollBars.Vertical; incoming.MaxLength = 2097152;
-        incoming.WordWrap = true; traffic.Controls.Add(incoming);
-        counters.SetBounds(0, 308, 744, 26); traffic.Controls.Add(counters);
-        sendOptions.SetBounds(0, 346, 744, 30); traffic.Controls.Add(sendOptions);
-        LabelAt(sendOptions, "发送区", 0, 6); Check(sendOptions, txHex, "HEX 发送", 86, 0, 120, false);
-        LabelAt(sendOptions, "结尾", 224, 6); Combo(sendOptions, newline, 276, 0, 108, new[] { "无", "CRLF", "LF", "CR" }, 0);
-        LabelAt(sendOptions, "发送间隔 ms", 416, 6); interval.SetBounds(540, 0, 204, 30); interval.Minimum = 100; interval.Maximum = 3600000; interval.Value = 1000; sendOptions.Controls.Add(interval);
-        outgoing.Multiline = true; outgoing.ScrollBars = ScrollBars.Vertical; outgoing.Font = new Font("Consolas", 11); outgoing.MaxLength = 131072;
+        UiTheme.Add(receive, incoming, true);
+        UiTheme.Status(counters);
+        UiTheme.Add(receive, counters);
+
+        var transmit = UiTheme.Stack();
+        UiTheme.Check(txHex, "HEX 发送", false);
+        UiTheme.Combo(newline, 75, new[] { "无", "CRLF", "LF", "CR" }, 0);
+        UiTheme.Number(interval, 87, 100, 3600000, 1000);
+        var sendLabel = UiTheme.Label("发送区");
+        UiTheme.Add(transmit, UiTheme.Row(sendLabel, sendLabel, txHex, UiTheme.Label("结尾"), newline,
+            UiTheme.Label("间隔 ms"), interval, UiTheme.Button(send, "发送一次", true), UiTheme.Button(automatic, "开始定时发送")));
+        outgoing.Multiline = true; outgoing.ScrollBars = ScrollBars.Vertical; outgoing.Font = UiTheme.Mono; outgoing.MaxLength = 131072;
         BuildSendEditor();
-        notice.SetBounds(0, 510, 744, 44); notice.ForeColor = Color.DimGray;
-        notice.Text = "在顶部选择端口和波特率，点击左侧“连接串口”。HEX 示例：AA BB 0D 0A。";
-        traffic.Controls.Add(notice);
+        UiTheme.Add(transmit, sendTabs, true);
+        UiTheme.Add(layout, UiTheme.Split(receive, transmit, 204), true);
+        UiTheme.Status(notice);
+        notice.Text = "选择端口和波特率后连接串口。输入文本或 HEX，使用 Ctrl+Enter 发送。";
+        UiTheme.Add(layout, notice);
     }
 
     void BuildSendEditor()
     {
-        sendTabs.SetBounds(0, 370, 744, 130);
         var single = new TabPage("单条发送");
         var multiple = new TabPage("多条发送");
         outgoing.Dock = DockStyle.Fill;
         single.Controls.Add(outgoing);
         sendTabs.TabPages.AddRange(new[] { single, multiple });
-        traffic.Controls.Add(sendTabs);
 
         commands.Dock = DockStyle.Fill;
         commands.BackgroundColor = Color.White;
@@ -150,53 +149,38 @@ internal sealed class SerialWorkspace : IDisposable
 
     void BuildConnection()
     {
-        LabelAt(Terminal, "端口", 24, 86);
-        Combo(Terminal, ports, 80, 80, 180, new string[0], -1);
-        LabelAt(Terminal, "波特率", 282, 86);
-        Combo(Terminal, baud, 350, 80, 178, new[] { "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600" }, 7);
+        UiTheme.Combo(ports, 135, new string[0], -1);
+        UiTheme.Combo(baud, 112, new[] { "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600" }, 7);
         baud.DropDownStyle = ComboBoxStyle.DropDown;
-        advancedToggle.SetBounds(600, 84, 168, 26);
-        advancedToggle.LinkColor = Color.FromArgb(35, 96, 207);
+        advancedToggle.AutoSize = true;
+        advancedToggle.LinkColor = UiTheme.Blue;
         advancedToggle.LinkClicked += delegate { advancedExpanded = !advancedExpanded; LayoutTerminal(); };
-        Terminal.Controls.Add(advancedToggle);
+        UiTheme.Status(state); UiTheme.Status(config);
+        UiTheme.Add(layout, UiTheme.Row(state, UiTheme.Label("端口"), ports, UiTheme.Label("波特率"), baud, advancedToggle, state));
+        UiTheme.Add(layout, config);
 
-        advancedPanel.SetBounds(24, 150, 744, 104);
-        advancedPanel.BackColor = Color.FromArgb(233, 239, 248);
-        Terminal.Controls.Add(advancedPanel);
-        LabelAt(advancedPanel, "数据位", 10, 16); Combo(advancedPanel, bits, 78, 10, 100, new[] { "5", "6", "7", "8" }, 3);
-        LabelAt(advancedPanel, "校验", 214, 16); Combo(advancedPanel, parity, 270, 10, 140, new[] { "None", "Odd", "Even", "Mark", "Space" }, 0);
-        LabelAt(advancedPanel, "停止位", 460, 16); Combo(advancedPanel, stops, 538, 10, 188, new[] { "1", "1.5", "2" }, 0);
-        LabelAt(advancedPanel, "流控", 10, 66); Combo(advancedPanel, flow, 78, 60, 240, new[] { "无流控", "XON / XOFF", "RTS / CTS", "RTS + XON / XOFF" }, 0);
-        Check(advancedPanel, dtr, "DTR", 378, 58, 120, false);
-        Check(advancedPanel, rts, "RTS", 538, 58, 120, false);
+        var options = UiTheme.Card(true);
+        UiTheme.Combo(bits, 70, new[] { "5", "6", "7", "8" }, 3);
+        UiTheme.Combo(parity, 108, new[] { "None", "Odd", "Even", "Mark", "Space" }, 0);
+        UiTheme.Combo(stops, 70, new[] { "1", "1.5", "2" }, 0);
+        UiTheme.Combo(flow, 155, new[] { "无流控", "XON / XOFF", "RTS / CTS", "RTS + XON / XOFF" }, 0);
+        UiTheme.Check(dtr, "DTR", false); UiTheme.Check(rts, "RTS", false);
+        UiTheme.Add(options, UiTheme.Row(null, UiTheme.Label("数据位"), bits, UiTheme.Label("校验"), parity, UiTheme.Label("停止位"), stops));
+        UiTheme.Add(options, UiTheme.Row(null, UiTheme.Label("流控"), flow, dtr, rts));
+        advancedPanel.AutoSize = true;
+        advancedPanel.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        advancedPanel.Controls.Add(options);
+        UiTheme.Add(layout, advancedPanel);
     }
 
     void LayoutTerminal()
     {
-        int extra = advancedExpanded ? 116 : 0;
-        int shrink = Math.Min(120, extra + (MultiSend ? 104 : 0));
-        Terminal.AutoScrollPosition = Point.Empty;
         advancedPanel.Visible = advancedExpanded;
         advancedToggle.Text = advancedExpanded ? "收起高级参数 ▴" : "高级参数 ▾";
-        traffic.Top = 150 + extra;
-        incoming.Height = 240 - shrink;
-        counters.Top = incoming.Bottom + 10;
-        sendOptions.Top = counters.Top + 38;
-        sendTabs.Top = sendOptions.Top + 44;
-        sendTabs.Height = MultiSend ? 234 : 130;
-        notice.Top = sendTabs.Bottom + 14;
-        traffic.Height = notice.Bottom;
-        Terminal.AutoScrollMinSize = new Size(792, traffic.Bottom + 16);
     }
 
     void BindEvents()
     {
-        connect.Text = "连接串口";
-        send.Text = "发送一次";
-        automatic.Text = "开始定时发送";
-        clear.Text = "清空记录";
-        save.Text = "保存日志";
-        refresh.Text = "刷新端口";
         connect.Click += async delegate
         {
             if (changing || shuttingDown) return;
@@ -204,14 +188,16 @@ internal sealed class SerialWorkspace : IDisposable
             else await OpenPort();
         };
         send.Click += async delegate { await SendOnce(); };
+        outgoing.KeyDown += delegate(object sender, KeyEventArgs e) {
+            if (e.Control && e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; send.PerformClick(); }
+        };
         automatic.Click += delegate { ToggleAutomatic(); };
         clear.Click += delegate { ClearRecords(); };
         save.Click += delegate { SaveLog(); };
         refresh.Click += delegate { RefreshPorts(); };
         sendTabs.SelectedIndexChanged += delegate
         {
-            LayoutTerminal();
-            notice.Text = MultiSend ? "勾选需要发送的条目，按表格顺序发送；每条可单独选 HEX，文本使用上方结尾。" : "单条发送：输入文本或 HEX，使用左侧发送按钮。";
+            notice.Text = MultiSend ? "勾选需要发送的条目，按表格顺序发送；每条可单独选 HEX，文本使用上方结尾。" : "单条发送：输入文本或 HEX，使用发送按钮或 Ctrl+Enter。";
             UpdateControls();
         };
         foreach (var box in new[] { rxHex, timestamps, showTx }) box.CheckedChanged += delegate { Render(); };
@@ -253,10 +239,6 @@ internal sealed class SerialWorkspace : IDisposable
             await WritePayload(payload);
         };
     }
-    static void Title(Control page, string text) { page.Controls.Add(new Label { Text = text, Location = new Point(24, 20), Size = new Size(320, 44), Font = new Font("Microsoft YaHei UI", 22, FontStyle.Bold) }); }
-    static void LabelAt(Control page, string text, int x, int y) { page.Controls.Add(new Label { Text = text, AutoSize = true, Location = new Point(x, y) }); }
-    static void Check(Control page, CheckBox box, string text, int x, int y, int width, bool value) { box.Text = text; box.SetBounds(x, y, width, 30); box.Checked = value; page.Controls.Add(box); }
-    static void Combo(Control page, ComboBox box, int x, int y, int width, string[] values, int index) { box.SetBounds(x, y, width, 30); box.DropDownStyle = ComboBoxStyle.DropDownList; box.Items.AddRange(values); if (index >= 0) box.SelectedIndex = index; page.Controls.Add(box); }
     void Ui(Action action)
     {
         Control host = (Control)Terminal.FindForm() ?? Terminal;
@@ -268,7 +250,7 @@ internal sealed class SerialWorkspace : IDisposable
         try { foreach (string p in SerialPort.GetPortNames().OrderBy(p => p.Length).ThenBy(p => p)) ports.Items.Add(p); }
         catch (Exception ex) { notice.Text = "枚举端口失败：" + ex.Message; }
         if (ports.Items.Contains(selected)) ports.SelectedItem = selected; else if (ports.Items.Count > 0) ports.SelectedIndex = 0;
-        if (ports.Items.Count == 0) notice.Text = "未发现 COM 端口，接入 USB 串口设备后点击左侧“刷新端口”。";
+        if (ports.Items.Count == 0) notice.Text = "未发现 COM 端口，接入 USB 串口设备后点击“刷新端口”。";
         UpdateControls();
     }
     SerialSettings ReadSettings()
@@ -290,7 +272,7 @@ internal sealed class SerialWorkspace : IDisposable
             await session.Open(s);
             connectionText = s.PortName + " · " + s.Baud + " · " + Framing();
             Info("OPEN", "串口已打开：" + connectionText);
-            notice.Text = "已连接。发送按钮位于左侧，可发送文本或 HEX 字节。";
+            notice.Text = "已连接。可在发送区输入文本或 HEX，按 Ctrl+Enter 发送。";
         }
         catch (Exception ex) { ShowError("打开失败：" + ex.Message); }
         finally { changing = false; UpdateControls(); }

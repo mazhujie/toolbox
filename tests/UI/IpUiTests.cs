@@ -29,6 +29,9 @@ internal static partial class ToolboxUiTests
         Assert(IpRoute(ip).Proxy == "http://127.0.0.1:7888", "manual route input applied and trimmed");
         Capture(form, "preview-ip-manual.png");
         Field<IpCard>(ip, "proxied").ShowInfo(new IpInfo { Ip = "203.0.113.99", Risk = 55 });
+        proxy.Text = "http://127.0.0.1:7889";
+        Assert(Field<TextBox>(Field<IpCard>(ip, "proxied"), "address").Text == "203.0.113.99" &&
+            Field<Label>(ip, "summary").Text.Contains("上次查询"), "editing proxy retains results and marks them stale");
         routeMenu.Items[0].PerformClick();
         Assert(!proxy.Visible && IpRoute(ip).Mode == 0 && Field<TextBox>(Field<IpCard>(ip, "proxied"), "address").Text == "—", "route change clears stale proxy result");
         routeMenu.Items[1].PerformClick();
@@ -52,15 +55,14 @@ internal static partial class ToolboxUiTests
         report.AppendLine("PASS direct/proxy IP type labels, evidence, conservative unknown state and route-reset cleanup");
 
         await ExerciseSpeed(form, shell);
-        typeof(MainForm).GetMethod("Busy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { true });
-        Assert(!Field<Button>(Field<SpeedPage>(form, "speedPage"), "start").Enabled, "moved speed action busy state");
+        typeof(MainForm).GetMethod("SetNetworkBusy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { "speed", true });
         Assert(!routeButton.Enabled && !proxy.Enabled, "IP route changes locked while network task runs");
         routeMenu.Items[0].PerformClick();
         Assert(IpRoute(ip).Mode == 1, "busy route cannot change through menu");
         shell.ShowView("lan");
-        Assert(!Field<LanPage>(form, "lanPage").Actions[0].Enabled, "moved LAN action busy state");
-        typeof(MainForm).GetMethod("Busy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { false });
-        Assert(Field<LanPage>(form, "lanPage").Actions[0].Enabled, "LAN action restored");
+        Assert(!Field<Button>(Field<LanPage>(form, "lanPage"), "start").Enabled, "moved LAN action busy state");
+        typeof(MainForm).GetMethod("SetNetworkBusy", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { "speed", false });
+        Assert(Field<Button>(Field<LanPage>(form, "lanPage"), "start").Enabled, "LAN action restored");
         report.AppendLine("PASS network mutual exclusion survives navigation");
 
     }

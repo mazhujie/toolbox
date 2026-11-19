@@ -21,51 +21,88 @@ internal sealed class SpeedPage : UserControl
     readonly List<string[]> history = new List<string[]>();
     long previousBytes; double previousTime;
     readonly Action<bool> setBusy;
-    internal Button[] Actions { get { return new[] { start, stop, export }; } }
+    bool externalBusy, syncingUrl, stopping;
+    static readonly string[] urls = {
+        "https://mirrors.aliyun.com/ubuntu/ls-lR.gz", "https://mirrors.huaweicloud.com/ubuntu/ls-lR.gz",
+        "http://test.ustc.edu.cn/backend/garbage.php?ckSize=16", "https://test.nju.edu.cn/backend/garbage.php?ckSize=16",
+        "https://speed.cloudflare.com/__down?bytes=10000000", "https://proof.ovh.net/files/100Mb.dat"
+    };
     internal SpeedPage(Action<bool> busy)
     {
-        setBusy = busy; AutoScroll = true;
-        Font = new Font("Microsoft YaHei UI", 10); BackColor = Color.FromArgb(245, 247, 251);
-        var title = new Label { Text = "网络测速", Font = new Font(Font.FontFamily, 22, FontStyle.Bold), AutoSize = true, Location = new Point(24, 18) };
-        Controls.Add(title);
-        AddLabel("测速地址", 24, 82); source.SetBounds(120, 78, 650, 30); source.DropDownStyle = ComboBoxStyle.DropDownList;
+        setBusy = busy;
+        var layout = UiTheme.Page(this);
+        UiTheme.Heading(layout, "下载测速", UiTheme.Button(start, "开始测速", true),
+            UiTheme.Button(stop, "停止", warning: true), UiTheme.Button(export, "导出 CSV"));
+        var inputs = UiTheme.Card(true);
+        source.DropDownStyle = ComboBoxStyle.DropDownList;
         source.Items.AddRange(new object[] { "国内 · 阿里云开源镜像", "国内 · 华为云开源镜像", "国内 · 中科大测速网", "国内 · 南京大学测速网", "海外 · Cloudflare", "海外 · OVH 备用", "自定义下载地址" });
-        Controls.Add(source); url.SetBounds(120, 117, 650, 30); Controls.Add(url);
         source.SelectedIndexChanged += delegate {
-            string[] urls = { "https://mirrors.aliyun.com/ubuntu/ls-lR.gz", "https://mirrors.huaweicloud.com/ubuntu/ls-lR.gz", "http://test.ustc.edu.cn/backend/garbage.php?ckSize=16", "https://test.nju.edu.cn/backend/garbage.php?ckSize=16", "https://speed.cloudflare.com/__down?bytes=10000000", "https://proof.ovh.net/files/100Mb.dat" };
-            if (source.SelectedIndex >= 0 && source.SelectedIndex < urls.Length) url.Text = urls[source.SelectedIndex];
+            if (source.SelectedIndex < 0 || source.SelectedIndex >= urls.Length) return;
+            syncingUrl = true;
+            url.Text = urls[source.SelectedIndex];
+            syncingUrl = false;
+        };
+        url.TextChanged += delegate {
+            if (!syncingUrl && source.SelectedIndex < urls.Length) source.SelectedIndex = urls.Length;
         };
         source.SelectedIndex = 0;
-        AddLabel("连接方式", 24, 166); mode.SetBounds(120, 162, 225, 30); mode.DropDownStyle = ComboBoxStyle.DropDownList;
-        mode.Items.AddRange(new object[] { "直连（不使用 HTTP 代理）", "跟随 Windows 系统代理", "手动 HTTP / 混合端口" });
-        Controls.Add(mode); proxy.SetBounds(360, 162, 410, 30); proxy.Text = "http://127.0.0.1:7890"; Controls.Add(proxy);
-        mode.SelectedIndexChanged += delegate { proxy.Enabled = mode.SelectedIndex == 2; }; mode.SelectedIndex = 0;
-        AddLabel("下载时长", 24, 212); seconds.SetBounds(120, 207, 90, 30); seconds.Minimum = 3; seconds.Maximum = 60; seconds.Value = 10; Controls.Add(seconds);
-        AddLabel("秒", 218, 212); AddLabel("并发连接", 310, 212); connections.SetBounds(405, 207, 85, 30); connections.Minimum = 1; connections.Maximum = 8; connections.Value = 4; Controls.Add(connections);
-        var note = new Label { Text = "手动模式使用 HTTP 或混合端口，不支持纯 SOCKS5。TUN/VPN 可能接管直连流量。\n测速会消耗流量；结果代表当前地址的下载能力，不包含上传测速。", AutoSize = false, ForeColor = Color.DimGray };
-        note.SetBounds(24, 253, 752, 48); Controls.Add(note);
-        speed.Text = "— Mbps"; speed.Font = new Font(Font.FontFamily, 36, FontStyle.Bold); speed.ForeColor = Color.FromArgb(35, 96, 207); speed.SetBounds(24, 308, 740, 75); Controls.Add(speed);
-        detail.Text = "实时下载速度 · 1 MB/s = 8 Mbps"; detail.SetBounds(28, 389, 742, 27); Controls.Add(detail);
-        bar.SetBounds(28, 425, 742, 8); bar.Maximum = 1000; Controls.Add(bar);
-        start.Text = "开始测速"; start.SetBounds(28, 453, 150, 40); start.BackColor = Color.FromArgb(35, 96, 207); start.ForeColor = Color.White; start.FlatStyle = FlatStyle.Flat;
-        stop.Text = "停止"; stop.SetBounds(192, 453, 100, 40); stop.Enabled = false;
-        export.Text = "导出 CSV"; export.SetBounds(650, 453, 120, 40);
-        Controls.AddRange(new Control[] { start, stop, export });
-        status.Text = "就绪。可用同一地址分别测直连和代理，方便比较。"; status.SetBounds(28, 453, 742, 30); Controls.Add(status);
-        log.Multiline = true; log.ReadOnly = true; log.ScrollBars = ScrollBars.Vertical; log.SetBounds(28, 492, 742, 164); Controls.Add(log);
-        start.Click += async delegate { await StartTest(); }; stop.Click += delegate { if (running != null) running.Cancel(); };
+        UiTheme.Combo(mode, 235, new[] { "直连（不使用 HTTP 代理）", "跟随 Windows 系统代理", "手动 HTTP / 混合端口" }, 0);
+        proxy.Text = "http://127.0.0.1:7890";
+        mode.SelectedIndexChanged += delegate { UpdateControls(); };
+        UiTheme.Number(seconds, 85, 3, 60, 10);
+        UiTheme.Number(connections, 85, 1, 8, 4);
+        UiTheme.Add(inputs, UiTheme.Row(source, UiTheme.Label("测速来源"), source));
+        UiTheme.Add(inputs, UiTheme.Row(url, UiTheme.Label("下载地址"), url));
+        UiTheme.Add(inputs, UiTheme.Row(proxy, UiTheme.Label("连接方式"), mode, UiTheme.Label("代理地址"), proxy));
+        UiTheme.Add(inputs, UiTheme.Row(null, UiTheme.Label("下载时长"), seconds, UiTheme.Label("秒     并发连接"), connections));
+        UiTheme.Add(layout, inputs);
+
+        var metric = UiTheme.Card(true);
+        speed.Text = "— Mbps"; speed.Font = UiTheme.Metric; speed.ForeColor = UiTheme.Blue; speed.Height = 67;
+        detail.Text = "实时下载速度 · 1 MB/s = 8 Mbps";
+        UiTheme.Status(detail);
+        bar.Height = 8; bar.Maximum = 1000;
+        UiTheme.Add(metric, speed);
+        UiTheme.Add(metric, detail);
+        UiTheme.Add(metric, bar);
+        UiTheme.Add(layout, metric);
+        status.Text = "就绪。可用同一地址分别测直连和代理，方便比较。";
+        status.AutoSize = true; status.ForeColor = UiTheme.Muted;
+        UiTheme.Add(layout, status);
+        log.Multiline = true; log.ReadOnly = true; log.ScrollBars = ScrollBars.Vertical; log.BackColor = Color.White; log.Font = UiTheme.Mono;
+        UiTheme.Add(layout, log, true);
+        var note = UiTheme.Label("测速会消耗流量。手动代理支持 HTTP / 混合端口；TUN / VPN 可能接管直连流量。");
+        note.ForeColor = UiTheme.Muted;
+        UiTheme.Add(layout, note);
+        start.Click += async delegate { await StartTest(); };
+        stop.Click += delegate { Cancel(); };
         export.Click += delegate { Export(); };
+        UpdateControls();
     }
-    internal void Cancel() { if (running != null) running.Cancel(); }
-    void AddLabel(string text, int x, int y) { var l = new Label { Text = text, AutoSize = true, Location = new Point(x, y) }; Controls.Add(l); }
-    void Ui(Action action) { if (!IsDisposed && IsHandleCreated) { try { BeginInvoke(action); } catch (InvalidOperationException) { } } }
-    internal void SetExternalBusy(bool yes)
+
+    internal void Cancel()
     {
-        foreach (Control c in new Control[] { source, mode, url, seconds, connections, start }) c.Enabled = !yes;
-        proxy.Enabled = !yes && mode.SelectedIndex == 2; stop.Enabled = running != null;
+        if (running == null || stopping) return;
+        stopping = true;
+        status.Text = "正在停止…";
+        UpdateControls();
+        running.Cancel();
     }
+
+    void Ui(Action action) { if (!IsDisposed && IsHandleCreated) { try { BeginInvoke(action); } catch (InvalidOperationException) { } } }
+    internal void SetExternalBusy(bool busy) { externalBusy = busy; UpdateControls(); }
+
+    void UpdateControls()
+    {
+        bool editable = running == null && !externalBusy;
+        foreach (Control control in new Control[] { source, mode, url, seconds, connections, start }) control.Enabled = editable;
+        proxy.Enabled = editable && mode.SelectedIndex == 2;
+        stop.Enabled = running != null && !stopping;
+    }
+
     async Task StartTest()
     {
+        if (running != null || externalBusy) return;
         Uri address;
         if (!Uri.TryCreate(url.Text.Trim(), UriKind.Absolute, out address) || (address.Scheme != "http" && address.Scheme != "https") || address.UserInfo.Length > 0)
         { MessageBox.Show("请输入有效的 HTTP/HTTPS 文件地址，不要包含账号密码。"); return; }
@@ -83,7 +120,7 @@ internal sealed class SpeedPage : UserControl
                 speed.Text = instant.ToString("F2") + " Mbps";
                 detail.Text = String.Format("{0:F2} MB/s  ·  已下载 {1:F1} MB  ·  {2:F1} / {3} 秒", instant / 8, bytes / 1000000.0, elapsed, o.Seconds);
                 bar.Value = Math.Min(1000, (int)(elapsed / o.Seconds * 1000));
-            }), text => Ui(() => status.Text = text));
+            }), text => Ui(() => { if (!stopping) status.Text = text; }));
             if (IsDisposed) return;
             speed.Text = r.Mbps.ToString("F2") + " Mbps";
             detail.Text = String.Format("平均 {0:F2} MB/s  ·  首字节 {1:F0} ms  ·  已下载 {2:F1} MB  ·  {3:F1} 秒", r.Mbps / 8, r.Latency, r.Bytes / 1000000.0, r.Seconds);
@@ -105,7 +142,7 @@ internal sealed class SpeedPage : UserControl
                 log.AppendText(DateTime.Now.ToString("HH:mm:ss") + "  " + error.Message + Environment.NewLine);
             }
         }
-        finally { var old = running; running = null; old.Dispose(); if (!IsDisposed) setBusy(false); }
+        finally { var old = running; running = null; stopping = false; old.Dispose(); if (!IsDisposed) setBusy(false); }
     }
     void Export()
     {

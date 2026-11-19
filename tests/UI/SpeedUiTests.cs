@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -15,17 +16,21 @@ internal static partial class ToolboxUiTests
         {
             shell.ShowView("speed");
             url.Text = server.Url;
+            Assert(Field<ComboBox>(page, "source").SelectedIndex == 6, "editing URL selects custom source");
             Field<NumericUpDown>(page, "seconds").Value = 3;
             Field<Button>(page, "start").PerformClick();
             await Until(() => Field<long>(page, "previousBytes") > 0, "speed page receives loopback download progress");
             Assert(!Field<Button>(Field<IpPage>(form, "ipPage"), "query").Enabled, "download locks IP lookup");
             shell.ShowView("lan");
-            Assert(!Field<LanPage>(form, "lanPage").Actions[0].Enabled && Field<CancellationTokenSource>(page, "running") != null, "download continues while LAN scan is locked on another page");
-            shell.ShowView("speed");
+            Assert(!Field<Button>(Field<LanPage>(form, "lanPage"), "start").Enabled && Field<CancellationTokenSource>(page, "running") != null, "download continues while LAN scan is locked on another page");
+            var banner = Field<TableLayoutPanel>(shell, "mutexBanner");
+            Assert(banner.Visible, "LAN explains why the start action is disabled");
+            banner.Controls.OfType<Button>().Single().PerformClick();
+            Assert(shell.CurrentView == "speed" && !banner.Visible, "banner navigates to the running task");
             Field<Button>(page, "stop").PerformClick();
             await Until(() => Field<CancellationTokenSource>(page, "running") == null, "speed page cancellation completes");
             Assert(Field<List<string[]>>(page, "history").Count == 1 && Field<Button>(page, "start").Enabled, "cancelled download retains metrics and unlocks page");
-            Assert(Field<Button>(Field<IpPage>(form, "ipPage"), "query").Enabled && Field<LanPage>(form, "lanPage").Actions[0].Enabled, "download completion unlocks other network pages");
+            Assert(Field<Button>(Field<IpPage>(form, "ipPage"), "query").Enabled && Field<Button>(Field<LanPage>(form, "lanPage"), "start").Enabled, "download completion unlocks other network pages");
         }
         foreach (string path in new[] { "/rate-limit", "/rate-limit-after-data", "/error" })
         using (var server = new TestServer())

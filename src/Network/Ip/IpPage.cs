@@ -11,15 +11,25 @@ internal sealed class IpCard : Panel
     readonly Label score = new Label(), networkType = new Label();
     public IpCard(string name)
     {
-        Size = new Size(360, 396); BackColor = Color.White; BorderStyle = BorderStyle.FixedSingle;
-        var title = new Label { Text = name, Font = new Font("Microsoft YaHei UI", 13, FontStyle.Bold), Location = new Point(14, 14), Size = new Size(328, 28) };
-        address.SetBounds(14, 52, 328, 58); address.Multiline = true; address.ReadOnly = true; address.BorderStyle = BorderStyle.None;
-        address.BackColor = Color.White; address.Font = new Font("Segoe UI", 17, FontStyle.Bold); address.Text = "—";
-        score.SetBounds(14, 120, 328, 30); score.Font = new Font("Microsoft YaHei UI", 14, FontStyle.Bold); score.ForeColor = Color.FromArgb(35, 96, 207);
-        networkType.SetBounds(14, 154, 328, 28); networkType.Font = new Font("Microsoft YaHei UI", 12, FontStyle.Bold);
-        details.SetBounds(14, 194, 328, 184); details.Multiline = true; details.ReadOnly = true; details.BorderStyle = BorderStyle.None;
-        details.BackColor = Color.White; details.ScrollBars = ScrollBars.Vertical; details.Font = new Font("Microsoft YaHei UI", 10);
-        Controls.AddRange(new Control[] { title, address, score, networkType, details }); Reset("点击“查询出口 IP”后显示结果。");
+        BackColor = Color.White;
+        BorderStyle = BorderStyle.FixedSingle;
+        var layout = UiTheme.Stack();
+        layout.Padding = new Padding(12, 8, 12, 8);
+        Controls.Add(layout);
+        var title = UiTheme.Label(name);
+        title.Font = UiTheme.Section;
+        address.Height = 47; address.Multiline = true; address.ReadOnly = true; address.BorderStyle = BorderStyle.None;
+        address.BackColor = Color.White; address.Font = UiTheme.Address; address.TabStop = false;
+        score.Height = 26; score.Font = UiTheme.Section; score.ForeColor = UiTheme.Blue;
+        networkType.Height = 25; networkType.Font = UiTheme.Section;
+        details.Multiline = true; details.ReadOnly = true; details.BorderStyle = BorderStyle.None;
+        details.BackColor = Color.White; details.ScrollBars = ScrollBars.Vertical;
+        UiTheme.Add(layout, title);
+        UiTheme.Add(layout, address);
+        UiTheme.Add(layout, score);
+        UiTheme.Add(layout, networkType);
+        UiTheme.Add(layout, details, true);
+        Reset("点击“查询出口 IP”后显示结果。");
     }
     internal void Reset(string message) { address.Text = "—"; score.Text = "Scamalytics：未知"; networkType.Text = "IP 类型：未知"; details.Text = message; }
     static string Known(string value) { return String.IsNullOrEmpty(value) ? "未知" : value; }
@@ -46,8 +56,8 @@ internal sealed class IpPage : UserControl
     readonly Action<bool> setBusy;
     readonly IpCard direct = new IpCard("直连出口"), proxied = new IpCard("代理出口");
     readonly Button query = new Button(), cancel = new Button(), settings = new Button();
-    internal Button[] Actions { get { return new[] { query, cancel, settings }; } }
-    readonly Label routeLabel = new Label(), summary = new Label(), proxyLabel = new Label(), note = new Label();
+    readonly Label routeLabel = new Label(), summary = new Label(), note = new Label();
+    readonly TableLayoutPanel proxyRow;
     readonly TextBox proxy = new TextBox();
     readonly ContextMenuStrip routeMenu = new ContextMenuStrip();
     readonly string[] routeNames = { "直连", "系统代理", "手动代理" };
@@ -56,11 +66,13 @@ internal sealed class IpPage : UserControl
     bool speedBusy;
     public IpPage(Action<bool> busy)
     {
-        setBusy = busy; BackColor = Color.FromArgb(245, 247, 251); AutoScroll = true;
-        Controls.Add(new Label { Text = "出口 IP 与风险参考", Font = new Font("Microsoft YaHei UI", 21, FontStyle.Bold), Location = new Point(24, 20), Size = new Size(600, 40) });
-        routeLabel.SetBounds(24, 72, 744, 28); Controls.Add(routeLabel);
-        query.Text = "查询出口 IP"; query.SetBounds(24, 112, 160, 38); query.BackColor = Color.FromArgb(35, 96, 207); query.ForeColor = Color.White; query.FlatStyle = FlatStyle.Flat;
-        cancel.Text = "停止查询"; cancel.SetBounds(198, 112, 110, 38); cancel.Enabled = false;
+        setBusy = busy;
+        var layout = UiTheme.Page(this);
+        UiTheme.Button(settings, "连接方式");
+        UiTheme.Heading(layout, "出口 IP 与风险参考", settings,
+            UiTheme.Button(query, "查询出口 IP", true), UiTheme.Button(cancel, "停止查询", warning: true));
+        UiTheme.Status(routeLabel);
+        UiTheme.Add(layout, routeLabel);
         for (int i = 0; i < routeNames.Length; i++)
         {
             int index = i;
@@ -68,17 +80,20 @@ internal sealed class IpPage : UserControl
             item.Click += delegate { SelectRoute(index); };
             routeMenu.Items.Add(item);
         }
-        settings.Click += delegate { routeMenu.Show(settings, new Point(settings.Width + 6, 0)); };
-        proxyLabel.Text = "代理地址"; proxyLabel.SetBounds(24, 112, 90, 26);
-        proxy.Text = "http://127.0.0.1:7890"; proxy.SetBounds(114, 108, 654, 28);
-        proxy.TextChanged += delegate { RefreshRoute(); };
-        Controls.AddRange(new Control[] { proxyLabel, proxy });
-        Controls.AddRange(new Control[] { query, cancel, settings });
-        direct.Location = new Point(24, 126); proxied.Location = new Point(408, 126); Controls.AddRange(new Control[] { direct, proxied });
-        summary.SetBounds(24, 506, 744, 42); summary.Text = "选择系统或手动代理后，可同时查询直连和代理出口。"; Controls.Add(summary);
-        note.Text = "风险分取自 Scamalytics 网页的 Fraud Score（0–100，越高风险越高）。\nIP 类型依据该站标记；宽带类型仅推测住宅，未标记机房不等于住宅。\n遇到验证、限流或数据缺失时显示未知；住宅 IP 不代表低风险。\n分流可能改变出口；直连仅禁用 HTTP 代理，TUN / VPN 仍可能接管流量。";
-        note.ForeColor = Color.DimGray;
-        note.SetBounds(24, 558, 744, 88); Controls.Add(note);
+        settings.Click += delegate { routeMenu.Show(settings, new Point(0, settings.Height)); };
+        proxy.Text = "http://127.0.0.1:7890";
+        proxyRow = UiTheme.Row(proxy, UiTheme.Label("代理地址"), proxy);
+        UiTheme.Add(layout, proxyRow);
+        proxy.TextChanged += delegate {
+            summary.Text = "代理地址已更改。当前结果对应上次查询，请重新查询。";
+        };
+        UiTheme.Add(layout, UiTheme.Columns(false, direct, proxied), true);
+        summary.AutoSize = true;
+        UiTheme.Add(layout, summary);
+        note.Text = "风险分来自 Scamalytics（0–100）；未标记机房不等于住宅，住宅 IP 不代表低风险。"
+            + "\r\n分流可能改变出口；直连仅禁用 HTTP 代理，TUN / VPN 仍可能接管流量。";
+        note.AutoSize = true; note.ForeColor = UiTheme.Muted;
+        UiTheme.Add(layout, note);
         query.Click += async delegate { await QueryBoth(); }; cancel.Click += delegate { Cancel(); };
         RefreshRoute();
     }
@@ -102,11 +117,8 @@ internal sealed class IpPage : UserControl
         routeLabel.Text = routeMode == 0 ? "连接方式：直连，本次仅查询左侧出口。"
             : manual ? "连接方式：手动代理，在下方填写 HTTP / 混合端口。"
             : "连接方式：跟随 Windows 系统代理，同时查询直连和代理出口。";
-        proxy.Visible = proxyLabel.Visible = manual;
-        direct.Top = proxied.Top = manual ? 166 : 126;
-        summary.Top = direct.Bottom + 20;
-        note.Top = summary.Bottom + 10;
-        proxied.Reset(routeMode == 0 ? "当前仅查询直连，可用左侧连接方式切换到代理。" : "点击“查询出口 IP”，对比直连和所选代理出口。");
+        proxyRow.Visible = manual;
+        proxied.Reset(routeMode == 0 ? "当前仅查询直连。可通过连接方式切换到代理。" : "点击“查询出口 IP”，对比直连和所选代理出口。");
         summary.Text = "结果是查询服务看到的出口 IP，可选中文字复制。修改连接方式后请重新查询。";
         UpdateControls();
     }

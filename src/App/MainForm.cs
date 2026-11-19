@@ -13,54 +13,52 @@ internal sealed class MainForm : Form
     readonly SocketPage socketPage;
     readonly AdbWorkspace adbWorkspace;
     readonly CapturePage capturePage;
-    readonly ProjectStore projectStore;
-    readonly ProjectWorkspace projectWorkspace;
     readonly Icon appIcon;
     public MainForm() : this(null) { }
-    internal MainForm(SerialSession serialConnection, AdbWorkspace adbTools = null, CapturePage captureTools = null, ProjectStore projects = null)
+    internal MainForm(SerialSession serialConnection, AdbWorkspace adbTools = null, CapturePage captureTools = null, string settingsPath = null)
     {
         using (var stream = typeof(MainForm).Assembly.GetManifestResourceStream("Toolbox.AppIcon")) appIcon = new Icon(stream);
         Icon = appIcon;
-        projectStore = projects ?? new ProjectStore();
-        Text = "工具箱 " + Program.Version + " · 网络服务 / 串口 / 网络调试 / ADB / 项目助手"; ClientSize = new Size(1034, 760);
+        Text = "工具箱 " + Program.Version + " · 网络服务 / 串口 / 网络调试 / ADB"; ClientSize = new Size(1034, 760);
         MinimumSize = new Size(1050, 759); StartPosition = FormStartPosition.CenterScreen;
-        Font = new Font("Microsoft YaHei UI", 10); BackColor = Color.FromArgb(245, 247, 251);
+        Font = UiTheme.Body; BackColor = UiTheme.Background;
         shell = new ToolShell();
-        speedPage = new SpeedPage(Busy);
-        ipPage = new IpPage(Busy);
-        lanPage = new LanPage(Busy);
+        speedPage = new SpeedPage(busy => SetNetworkBusy("speed", busy));
+        ipPage = new IpPage(busy => SetNetworkBusy("ip", busy));
+        lanPage = new LanPage(busy => SetNetworkBusy("lan", busy));
         serialWorkspace = new SerialWorkspace(serialConnection);
         socketPage = new SocketPage();
         adbWorkspace = adbTools ?? new AdbWorkspace();
         capturePage = captureTools ?? new CapturePage();
-        adbWorkspace.Projects = projectStore;
-        projectWorkspace = new ProjectWorkspace(projectStore, adbWorkspace, () => shell.ShowView("adb-shell"));
-        shell.Add("speed", "network", "下载测速", speedPage, speedPage.Actions);
-        shell.Add("ip", "network", "出口 IP / 风险", ipPage, ipPage.Actions);
-        shell.Add("serial", "serial", "串口收发", serialWorkspace.Terminal, serialWorkspace.TerminalActions);
-        shell.Add("socket", "debug", "TCP / UDP 收发", socketPage, socketPage.Actions);
-        shell.Add("lan", "debug", "局域网扫描", lanPage, lanPage.Actions);
-        shell.Add("capture", "debug", "实时抓包", capturePage, capturePage.Actions);
-        shell.Add("adb-shell", "adb", "Shell 命令", adbWorkspace.ShellPage, adbWorkspace.ShellActions);
-        shell.Add("adb-files", "adb", "文件传输", adbWorkspace.FilesPage, adbWorkspace.FileActions);
-        shell.Add("projects", "projects", "项目助手", projectWorkspace);
+        shell.Add("speed", "network", "下载测速", speedPage);
+        shell.Add("ip", "network", "出口 IP / 风险", ipPage);
+        shell.Add("serial", "serial", "串口收发", serialWorkspace.Terminal);
+        shell.Add("socket", "debug", "TCP / UDP 收发", socketPage);
+        shell.Add("lan", "debug", "局域网扫描", lanPage);
+        shell.Add("capture", "debug", "实时抓包", capturePage);
+        shell.Add("adb-shell", "adb", "Shell 命令", adbWorkspace.ShellPage);
+        shell.Add("adb-files", "adb", "文件传输", adbWorkspace.FilesPage);
         Controls.Add(shell);
+        settingsPath = settingsPath ?? UiSettings.DefaultPath;
+        var settings = UiSettings.Load(settingsPath);
         var screen = Screen.PrimaryScreen.WorkingArea;
-        Size = new Size(Math.Min(screen.Width, Math.Max(MinimumSize.Width, projectStore.Data.Width)), Math.Min(screen.Height, Math.Max(MinimumSize.Height, projectStore.Data.Height)));
-        shell.ShowView(projectStore.Data.View);
-        if (shell.CurrentView == null) shell.ShowView("projects");
-        bool closing = false;
+        Size = new Size(Math.Min(screen.Width, Math.Max(MinimumSize.Width, settings.Width)), Math.Min(screen.Height, Math.Max(MinimumSize.Height, settings.Height)));
+        shell.ShowView(settings.View ?? "speed");
+        if (shell.CurrentView == null) shell.ShowView("speed");
+        bool closing = false, readyToClose = false;
         FormClosing += async delegate(object sender, FormClosingEventArgs e) {
-            if (closing) return; e.Cancel = true;
-            projectStore.Data.View = shell.CurrentView;
-            Size normal = WindowState == FormWindowState.Normal ? Size : RestoreBounds.Size;
-            projectStore.Data.Width = normal.Width; projectStore.Data.Height = normal.Height;
-            if (!projectWorkspace.SaveNow())
-            { MessageBox.Show(this, "项目内容未能保存，请检查窗口底部的错误提示后重试关闭。", "保存失败"); return; }
+            if (readyToClose) return;
+            e.Cancel = true;
+            if (closing) return;
             closing = true;
+            settings.View = shell.CurrentView;
+            Size normal = WindowState == FormWindowState.Normal ? Size : RestoreBounds.Size;
+            settings.Width = normal.Width; settings.Height = normal.Height;
+            settings.Save(settingsPath);
             speedPage.Cancel(); ipPage.Cancel(); lanPage.Cancel();
             socketPage.Shutdown();
-            await Task.WhenAll(serialWorkspace.Shutdown(), adbWorkspace.Shutdown(), capturePage.Shutdown(), projectWorkspace.Shutdown()); serialWorkspace.Dispose();
+            await Task.WhenAll(serialWorkspace.Shutdown(), adbWorkspace.Shutdown(), capturePage.Shutdown()); serialWorkspace.Dispose();
+            readyToClose = true;
             if (!IsDisposed) BeginInvoke(new Action(Close));
         };
     }
@@ -73,16 +71,19 @@ internal sealed class MainForm : Form
             if (socketPage != null) socketPage.Shutdown();
             if (adbWorkspace != null) adbWorkspace.Dispose();
             if (capturePage != null) capturePage.Shutdown();
-            if (projectWorkspace != null) projectWorkspace.Dispose();
-            if (projectStore != null) projectStore.Dispose();
         }
         base.Dispose(disposing);
         if (disposing && appIcon != null) appIcon.Dispose();
     }
-    void Busy(bool busy)
+    string networkBusyOwner;
+    void SetNetworkBusy(string owner, bool busy)
     {
-        speedPage.SetExternalBusy(busy);
-        ipPage.SetSpeedBusy(busy);
-        lanPage.SetExternalBusy(busy);
+        if (busy) networkBusyOwner = owner;
+        else if (networkBusyOwner == owner) networkBusyOwner = null;
+
+        speedPage.SetExternalBusy(networkBusyOwner != null && networkBusyOwner != "speed");
+        ipPage.SetSpeedBusy(networkBusyOwner != null && networkBusyOwner != "ip");
+        lanPage.SetExternalBusy(networkBusyOwner != null && networkBusyOwner != "lan");
+        shell.ShowNetworkBusy(networkBusyOwner);
     }
 }
